@@ -12,6 +12,10 @@ var _decals: Array[Decal] = []
 var _splat_tex: Array[ImageTexture] = []
 var _scorch_tex: ImageTexture
 var _mat_cache: Dictionary = {}
+var _pm_cache: Dictionary = {}       # ParticleProcessMaterial по конфигурации (не создаём заново на каждый выстрел)
+var _quad_cache: Dictionary = {}
+var _spark_mat: StandardMaterial3D
+var _brass_mat: StandardMaterial3D
 var quality := 2         # 0..3, влияет на число частиц и декалей
 
 
@@ -30,6 +34,11 @@ func _init() -> void:
 	for i in 3:
 		_splat_tex.append(_make_splat(i + 1))
 	_scorch_tex = _make_scorch()
+	# «земля» для столкновений частиц: искры и гильзы отскакивают от неё
+	var ground := GPUParticlesCollisionBox3D.new()
+	ground.size = Vector3(400, 2, 400)
+	ground.position = Vector3(10, -1.0, 10)
+	add_child(ground)
 
 
 func set_quality(q: int) -> void:
@@ -114,6 +123,26 @@ func emit(pos: Vector3, cfg: Dictionary) -> GPUParticles3D:
 	p.emitting = true
 	p.fixed_fps = 0
 	p.visibility_aabb = AABB(Vector3(-6, -3, -6), Vector3(12, 8, 12))
+	var key := var_to_str(cfg)
+	var pm: ParticleProcessMaterial = _pm_cache.get(key)
+	if pm == null:
+		pm = _make_pm(cfg)
+		_pm_cache[key] = pm
+	p.process_material = pm
+	var qkey := str(cfg.get("additive", true))
+	if not _quad_cache.has(qkey):
+		var q := QuadMesh.new()
+		q.size = Vector2(1, 1)
+		q.material = _particle_material(bool(cfg.get("additive", true)))
+		_quad_cache[qkey] = q
+	p.draw_pass_1 = _quad_cache[qkey]
+	p.position = pos
+	add_child(p)
+	_free_later(p, p.lifetime + 0.6)
+	return p
+
+
+func _make_pm(cfg: Dictionary) -> ParticleProcessMaterial:
 	var pm := ParticleProcessMaterial.new()
 	pm.direction = cfg.get("dir", Vector3.UP)
 	pm.spread = float(cfg.get("spread", 180.0))
@@ -146,15 +175,7 @@ func emit(pos: Vector3, cfg: Dictionary) -> GPUParticles3D:
 		var ct := CurveTexture.new()
 		ct.curve = curve
 		pm.scale_curve = ct
-	p.process_material = pm
-	var quad := QuadMesh.new()
-	quad.size = Vector2(1, 1)
-	quad.material = _particle_material(bool(cfg.get("additive", true)))
-	p.draw_pass_1 = quad
-	p.position = pos
-	add_child(p)
-	_free_later(p, p.lifetime + 0.6)
-	return p
+	return pm
 
 
 func flash_light(pos: Vector3, color: Color, energy: float, rng_m: float, dur: float) -> void:
@@ -177,9 +198,163 @@ func muzzle_flash(pos: Vector3, scale_f: float = 1.0) -> void:
 
 
 func sparks(pos: Vector3, color: Color = Color("ffe08a"), n: int = 6) -> void:
-	emit(pos, {"amount": n, "life": 0.35, "color": color, "size": Vector2(0.05, 0.11), "vel": Vector2(1.5, 4.5),
-		"gravity": 9.0, "additive": true})
+	spark_burst(pos, Vector3.UP, n, Vector2(1.5, 5.0), 80.0, 0.45)
 
+
+## Искры: светящиеся «штрихи», вытянутые по скорости, HDR-цвет (бело-жёлтый → оранжевый → тёмно-красный),
+## гравитация, сопротивление воздуха и отскок от земли.
+func spark_burst(pos: Vector3, dir: Vector3, n: int, vel: Vector2, spread_deg: float, life: float) -> void:
+	if quality == 0 and n < 3:
+		return
+	var p := GPUParticles3D.new()
+	p.amount = _amt(n)
+	p.lifetime = life
+	p.one_shot = true
+	p.explosiveness = 1.0
+	p.randomness = 0.5
+	p.local_coords = false
+	p.transform_align = GPUParticles3D.TRANSFORM_ALIGN_Z_BILLBOARD_Y_TO_VELOCITY
+	p.collision_base_size = 0.02
+	p.visibility_aabb = AABB(Vector3(-5, -3, -5), Vector3(10, 7, 10))
+	var d := dir.normalized() if dir.length() > 0.01 else Vector3.UP
+	var key := "spark|%s|%.1f|%s|%.2f" % [d.snapped(Vector3.ONE * 0.05), spread_deg, vel, life]
+	var pm: ParticleProcessMaterial = _pm_cache.get(key)
+	if pm == null:
+		pm = ParticleProcessMaterial.new()
+		pm.direction = d
+		pm.spread = spread_deg
+		pm.initial_velocity_min = vel.x
+		pm.initial_velocity_max = vel.y
+		pm.gravity = Vector3(0, -9.8, 0)
+		pm.damping_min = 0.5
+		pm.damping_max = 2.5
+		pm.scale_min = 0.5
+		pm.scale_max = 1.3
+		pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+		pm.emission_sphere_radius = 0.02
+		var ramp := Gradient.new()
+		ramp.set_color(0, Color(7.0, 5.0, 2.4, 1.0))
+		ramp.set_color(1, Color(0.4, 0.05, 0.0, 0.0))
+		ramp.add_point(0.2, Color(4.0, 1.8, 0.45, 1.0))
+		ramp.add_point(0.6, Color(1.6, 0.35, 0.06, 0.9))
+		var gt := GradientTexture1D.new()
+		gt.gradient = ramp
+		gt.use_hdr = true
+		pm.color_ramp = gt
+		var curve := Curve.new()
+		curve.add_point(Vector2(0, 1.0))
+		curve.add_point(Vector2(1, 0.25))
+		var ct := CurveTexture.new()
+		ct.curve = curve
+		pm.scale_curve = ct
+		pm.collision_mode = ParticleProcessMaterial.COLLISION_RIGID
+		pm.collision_bounce = 0.35
+		pm.collision_friction = 0.35
+		_pm_cache[key] = pm
+	p.process_material = pm
+	if _spark_mat == null:
+		_spark_mat = StandardMaterial3D.new()
+		_spark_mat.albedo_texture = _soft
+		_spark_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_spark_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		_spark_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_spark_mat.vertex_color_use_as_albedo = true
+		_spark_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_spark_mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+		_spark_mat.disable_receive_shadows = true
+		var q := QuadMesh.new()
+		q.size = Vector2(0.018, 0.2)
+		q.material = _spark_mat
+		_quad_cache["spark"] = q
+	p.draw_pass_1 = _quad_cache["spark"]
+	p.position = pos
+	add_child(p)
+	_free_later(p, life + 0.5)
+
+
+## Гильза: латунный цилиндрик вылетает вбок-вверх, крутится, звякает о землю и остаётся лежать недолго.
+func casing(pos: Vector3, side: Vector3, big: bool = false) -> void:
+	if quality == 0:
+		return
+	var p := GPUParticles3D.new()
+	p.amount = 1
+	p.lifetime = 1.6
+	p.one_shot = true
+	p.explosiveness = 1.0
+	p.local_coords = false
+	p.collision_base_size = 0.015
+	p.visibility_aabb = AABB(Vector3(-3, -3, -3), Vector3(6, 6, 6))
+	var s := side.normalized()
+	var key := "casing|%s" % s.snapped(Vector3.ONE * 0.1)
+	var pm: ParticleProcessMaterial = _pm_cache.get(key)
+	if pm == null:
+		pm = ParticleProcessMaterial.new()
+		pm.direction = (s + Vector3(0, 0.9, 0)).normalized()
+		pm.spread = 18.0
+		pm.initial_velocity_min = 1.6
+		pm.initial_velocity_max = 2.6
+		pm.gravity = Vector3(0, -9.8, 0)
+		pm.particle_flag_rotate_y = true
+		pm.angular_velocity_min = -900.0
+		pm.angular_velocity_max = 900.0
+		pm.angle_min = 0.0
+		pm.angle_max = 360.0
+		pm.collision_mode = ParticleProcessMaterial.COLLISION_RIGID
+		pm.collision_bounce = 0.4
+		pm.collision_friction = 0.6
+		_pm_cache[key] = pm
+	p.process_material = pm
+	var mk := "casing_big" if big else "casing"
+	if not _quad_cache.has(mk):
+		if _brass_mat == null:
+			_brass_mat = StandardMaterial3D.new()
+			_brass_mat.albedo_color = Color("c9963a")
+			_brass_mat.metallic = 0.9
+			_brass_mat.roughness = 0.3
+		var cm := CylinderMesh.new()
+		cm.top_radius = 0.011 if not big else 0.018
+		cm.bottom_radius = cm.top_radius
+		cm.height = 0.045 if not big else 0.075
+		cm.radial_segments = 6
+		cm.rings = 1
+		cm.material = _brass_mat
+		_quad_cache[mk] = cm
+	p.draw_pass_1 = _quad_cache[mk]
+	p.position = pos
+	add_child(p)
+	_free_later(p, 1.8)
+
+
+## Попадание в зомби: брызги крови по направлению выстрела и облачко.
+func blood_hit(pos: Vector3, dir: Vector3, n: int = 8) -> void:
+	var d := dir.normalized() if dir.length() > 0.01 else Vector3.UP
+	emit(pos, {"amount": n, "life": 0.55, "color": Color(0.42, 0.02, 0.02, 1.0), "size": Vector2(0.035, 0.085),
+		"vel": Vector2(1.2, 3.6), "dir": d.snapped(Vector3.ONE * 0.1), "spread": 38.0, "gravity": 9.8, "additive": false})
+	emit(pos, {"amount": 2, "life": 0.35, "color": Color(0.32, 0.02, 0.02, 0.5), "size": Vector2(0.22, 0.36),
+		"vel": Vector2(0.2, 0.7), "dir": d.snapped(Vector3.ONE * 0.1), "spread": 50.0, "additive": false, "grow": 2.0})
+
+
+## Промах: пыль с землёй и искры рикошета.
+func impact_ground(pos: Vector3, dir: Vector3) -> void:
+	var up := Vector3(dir.x * -0.3, 1.0, dir.z * -0.3).normalized()
+	emit(pos, {"amount": 3, "life": 0.7, "color": Color(0.46, 0.36, 0.26, 0.6), "size": Vector2(0.18, 0.3),
+		"vel": Vector2(0.3, 1.0), "dir": Vector3.UP, "spread": 35.0, "additive": false, "grow": 2.4, "explosive": 0.9})
+	spark_burst(pos + Vector3(0, 0.03, 0), up, 5, Vector2(2.0, 5.5), 45.0, 0.4)
+
+
+## Выстрел турели или личного оружия: вспышка, искры вперёд по стволу, дымок.
+func muzzle_sparks(pos: Vector3, dir: Vector3, kind: String) -> void:
+	match kind:
+		"gun":
+			spark_burst(pos, dir, 9, Vector2(3.0, 9.0), 22.0, 0.32)
+			smoke_puff(pos + dir * 0.2, 2)
+		"machinegun":
+			spark_burst(pos, dir, 4, Vector2(4.0, 10.0), 16.0, 0.22)
+		"ak":
+			spark_burst(pos, dir, 3, Vector2(3.0, 8.0), 14.0, 0.2)
+		"rocket":
+			spark_burst(pos, -dir, 16, Vector2(2.0, 7.0), 40.0, 0.5)
+			spark_burst(pos, dir, 6, Vector2(3.0, 8.0), 20.0, 0.3)
 
 func smoke_puff(pos: Vector3, n: int = 3) -> void:
 	emit(pos, {"amount": n, "life": 1.0, "color": Color(0.5, 0.48, 0.45, 0.55), "size": Vector2(0.3, 0.55),
@@ -218,8 +393,7 @@ func blast(pos: Vector3, radius: float) -> void:
 		"vel": Vector2(0.5, radius * 2.5), "gravity": -0.5, "additive": true, "grow": 1.8, "radius": 0.2})
 	emit(pos, {"amount": 16, "life": 1.6, "color": Color(0.22, 0.2, 0.18, 0.75), "size": Vector2(0.8, 1.5) * radius,
 		"vel": Vector2(0.8, radius * 2.0), "dir": Vector3.UP, "spread": 60.0, "gravity": -0.3, "additive": false, "grow": 2.6, "explosive": 0.7})
-	emit(pos, {"amount": 18, "life": 0.8, "color": Color("ffcf70"), "size": Vector2(0.06, 0.14), "vel": Vector2(4.0, 10.0),
-		"dir": Vector3.UP, "spread": 70.0, "gravity": 14.0, "additive": true})
+	spark_burst(pos + Vector3(0, 0.2, 0), Vector3.UP, 26, Vector2(4.0, 12.0), 75.0, 0.9)
 	# ударная волна
 	var ring := MeshInstance3D.new()
 	var tor := TorusMesh.new()
@@ -244,6 +418,23 @@ func blast(pos: Vector3, radius: float) -> void:
 	tw.chain().tween_callback(ring.queue_free)
 	scorch_decal(pos, radius * 2.0)
 	shake_requested.emit(clampf(radius * 0.35, 0.2, 0.8), pos)
+
+
+## Взрывун лопнул: зелёная вспышка, брызги кислотной жижи, ядовитое облако, пятно на земле.
+func acid_blast(pos: Vector3, radius: float) -> void:
+	flash_light(pos + Vector3(0, 0.7, 0), Color("a6ff5c"), 9.0, radius * 4.0, 0.45)
+	emit(pos + Vector3(0, 0.8, 0), {"amount": 30, "life": 0.9, "color": Color(0.6, 0.9, 0.22, 0.95), "mid_color": Color(0.35, 0.55, 0.1, 0.9),
+		"size": Vector2(0.1, 0.28), "vel": Vector2(2.0, 6.5), "gravity": 9.0, "additive": false, "radius": 0.3})
+	emit(pos + Vector3(0, 0.6, 0), {"amount": 12, "life": 2.2, "color": Color(0.5, 0.7, 0.22, 0.42), "size": Vector2(0.5, 0.9) * radius,
+		"vel": Vector2(0.4, 1.5), "dir": Vector3.UP, "spread": 75.0, "gravity": -0.15, "additive": false, "grow": 2.6, "explosive": 0.8})
+	var d := Decal.new()
+	d.texture_albedo = _splat_tex[randi() % _splat_tex.size()]
+	d.size = Vector3(radius * 1.6, 1.2, radius * 1.6)
+	d.position = Vector3(pos.x, 0.3, pos.z)
+	d.rotation.y = randf() * TAU
+	d.modulate = Color(0.55, 2.2, 0.35, 0.9)
+	_add_decal(d)
+	shake_requested.emit(0.35, pos)
 
 
 func turret_explosion(pos: Vector3) -> void:

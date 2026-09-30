@@ -15,22 +15,55 @@ const WALL_HEIGHT := 1.2          # высота стены игрока, м
 const TICK_RATE := 20             # частота симуляции, Гц
 
 # ───────────── Зомби ─────────────
-const ZOMBIE_TYPES := ["normal", "fat", "fast"]
+const ZOMBIE_TYPES := ["normal", "fat", "fast", "armored", "boomer", "brute"]
 const ATTACK_REACH := 0.85        # с какого расстояния до центра клетки турели зомби бьёт её
+# armor — множители урона по видам: bullet (турели-пушки, пулемёт, АК), melee (мачете/топор), fire (огнемёт, горение),
+# blast (ракеты, взрывы). score — очки игроку за добивание.
 const ZOMBIES := {
-	# Средний: базовый зомби
-	"normal": {"speed": 1.5, "hp": 40.0, "hp_per_wave": 6.0, "reward": 10, "radius": 0.45, "height": 1.8, "attack": 14.0, "scale": 1.0},
+	# Ходок: базовый зомби
+	"normal": {"speed": 1.5, "hp": 40.0, "hp_per_wave": 6.0, "reward": 10, "radius": 0.45, "height": 1.8, "attack": 14.0, "scale": 1.0,
+		"score": 10, "armor": {}},
 	# Толстый: медленный, очень много HP, сильно бьёт
-	"fat": {"speed": 0.8, "hp": 170.0, "hp_per_wave": 27.0, "reward": 35, "radius": 0.65, "height": 2.3, "attack": 26.0, "scale": 1.35},
-	# Быстрый: мало HP, летит к воротам
-	"fast": {"speed": 3.0, "hp": 22.0, "hp_per_wave": 3.0, "reward": 8, "radius": 0.4, "height": 1.6, "attack": 8.0, "scale": 0.85},
+	"fat": {"speed": 0.8, "hp": 170.0, "hp_per_wave": 27.0, "reward": 35, "radius": 0.65, "height": 2.1, "attack": 26.0, "scale": 1.0,
+		"score": 30, "armor": {}},
+	# Бегунья: мало HP, летит к воротам
+	"fast": {"speed": 3.0, "hp": 22.0, "hp_per_wave": 3.0, "reward": 8, "radius": 0.4, "height": 1.72, "attack": 8.0, "scale": 1.0,
+		"score": 12, "armor": {}},
+	# Броненосец (зомби-омоновец): пули и клинки почти не берут — жгите и взрывайте
+	"armored": {"speed": 1.25, "hp": 80.0, "hp_per_wave": 10.0, "reward": 22, "radius": 0.5, "height": 1.85, "attack": 16.0, "scale": 1.0,
+		"score": 25, "armor": {"bullet": 0.45, "melee": 0.5, "fire": 1.4}},
+	# Взрывун: при смерти лопается — ранит всех вокруг (зомби, турели, игроков); у турели или игрока взрывается сам
+	"boomer": {"speed": 1.2, "hp": 55.0, "hp_per_wave": 7.0, "reward": 18, "radius": 0.55, "height": 1.8, "attack": 0.0, "scale": 1.0,
+		"score": 18, "armor": {"fire": 1.25},
+		"explode": {"radius": 2.3, "zombie_dmg": 90.0, "turret_dmg": 45.0, "turret_dmg_per_wave": 3.0, "player_dmg": 40.0, "edge": 0.35}},
+	# Громила (босс): приходит на 10-й, 15-й, 20-й… волне, огромный запас здоровья, ломает турели за пару ударов
+	"brute": {"speed": 0.85, "hp": 300.0, "hp_per_wave": 45.0, "reward": 120, "radius": 0.8, "height": 2.9, "attack": 60.0, "scale": 1.0,
+		"score": 150, "armor": {"bullet": 0.8, "fire": 0.6}},
+}
+const DAMAGE_KINDS := ["bullet", "melee", "fire", "blast"]
+
+# ───────────── Очки игроков ─────────────
+const SCORE := {
+	"damage_per_point": 20.0,    # 1 очко за каждые 20 нанесённого урона
+	"death": -50,                # штраф за гибель в «Свободном FPS»
 }
 
 # ───────────── Волны ─────────────
 const WAVE := {
 	"base_count": 1, "count_per_wave": 1, "spawn_interval": 1.0, "reward_mul": 2.0,
 	"fast_from": 3, "fast_share": 0.3, "fat_from": 4, "fat_share": 0.2,
+	"armored_from": 6, "armored_share": 0.15, "boomer_from": 7, "boomer_share": 0.12,
+	"brute_from": 10, "brute_every": 5,   # громилы: волны 10, 15, 20…; один, с 30-й — два, с 50-й — три; идут последними
 }
+
+
+## Только для сравнения баланса (tools/balance.gd): состав волн без новых типов.
+static var legacy_waves := false
+
+
+## Множитель урона вида kind по зомби типа type.
+static func armor_mul(type: String, kind: String) -> float:
+	return float((ZOMBIES[type]["armor"] as Dictionary).get(kind, 1.0))
 
 # ───────────── Оружие / турели ─────────────
 const WEAPON_TYPES := ["gun", "machinegun", "rocket", "flame"]
@@ -100,29 +133,41 @@ static func _mulberry(state: Array) -> float:
 ## Состав волны — порядок появления зомби (детерминирован: клиент показывает то же самое).
 static func wave_composition(wave: int) -> Array:
 	var n := zombie_count(wave)
-	var fat := 0
-	var fast := 0
+	var counts := {"fat": 0, "fast": 0, "armored": 0, "boomer": 0}
 	if wave >= int(WAVE["fat_from"]):
-		fat = maxi(1, int(floor(n * float(WAVE["fat_share"]))))
+		counts["fat"] = maxi(1, int(floor(n * float(WAVE["fat_share"]))))
 	if wave >= int(WAVE["fast_from"]):
-		fast = maxi(1, int(ceil(n * float(WAVE["fast_share"]))))
-	while fat + fast > n:
-		if fast >= fat:
-			fast -= 1
-		else:
-			fat -= 1
+		counts["fast"] = maxi(1, int(ceil(n * float(WAVE["fast_share"]))))
+	if wave >= int(WAVE["armored_from"]) and not legacy_waves:
+		counts["armored"] = maxi(1, int(floor(n * float(WAVE["armored_share"]))))
+	if wave >= int(WAVE["boomer_from"]) and not legacy_waves:
+		counts["boomer"] = maxi(1, int(floor(n * float(WAVE["boomer_share"]))))
+	# особых не больше, чем всего зомби: урезаем самые многочисленные
+	var order := ["fast", "fat", "armored", "boomer"]
+	while counts["fat"] + counts["fast"] + counts["armored"] + counts["boomer"] > n:
+		var big := "fast"
+		for k in order:
+			if counts[k] > counts[big]:
+				big = k
+		counts[big] -= 1
 	var list: Array = []
-	for i in fat: list.append("fat")
-	for i in fast: list.append("fast")
-	for i in n - fat - fast: list.append("normal")
+	for k in ["fat", "fast", "armored", "boomer"]:
+		for i in counts[k]:
+			list.append(k)
+	for i in n - list.size():
+		list.append("normal")
 	var st: Array = [(wave * 7919) & 0xFFFFFFFF]
 	for i in range(list.size() - 1, 0, -1):
 		var j := int(floor(_mulberry(st) * (i + 1)))
 		var tmp = list[i]
 		list[i] = list[j]
 		list[j] = tmp
+	# громилы — сверх обычного числа и в самом конце волны
+	var every := int(WAVE["brute_every"])
+	if wave >= int(WAVE["brute_from"]) and wave % every == 0 and not legacy_waves:
+		for i in 1 + (wave - int(WAVE["brute_from"])) / 20:
+			list.append("brute")
 	return list
-
 
 ## Характеристики турели типа type на уровне level (1..max_level) — единственное место формул.
 static func turret_stats(level: int, type: String = "gun") -> Dictionary:

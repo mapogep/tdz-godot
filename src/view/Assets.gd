@@ -187,22 +187,10 @@ static func ground_material(field_size: float) -> ShaderMaterial:
 	return m
 
 
-## Материал моделей Tripo: цвета берутся из вершин. Своя копия на каждый экземпляр (вспышки, окраска типов).
-static func tripo_material() -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.vertex_color_use_as_albedo = true
-	m.albedo_color = Color(0.92, 0.9, 0.86)
-	m.roughness = 0.82
-	m.emission_enabled = true
-	m.emission = Color(1.0, 0.25, 0.08)
-	m.emission_energy_multiplier = 0.0
-	return m
-
-
 static var _model_mats: Dictionary = {}
 
 
-## Запечённый меш (tools/bake_models.gd): с нормалями, низ на нуле, центр по XZ в нуле.
+## Запечённый меш (tools/bake_all.gd): с нормалями, низ на нуле, центр по XZ в нуле.
 static func baked_mesh(n: String) -> Mesh:
 	var p := "res://assets/models/baked/%s.res" % n
 	return load(p) as Mesh if ResourceLoader.exists(p) else null

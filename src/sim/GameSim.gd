@@ -25,6 +25,10 @@ var zombies_killed: int = 0
 
 # игроки: peer_id -> {"name": String}
 var players: Dictionary = {}
+# очки: peer_id -> {score, kills, deaths, dmg, wave_score, wave_kills}; убийства автоматикой — отдельно
+var scores: Dictionary = {}
+var auto_kills := 0
+var auto_wave_kills := 0
 var host_id: int = 0
 
 # состояние игры и волны
@@ -63,7 +67,7 @@ func _init(p_start_money: int = Cfg.START_MONEY) -> void:
 
 
 func _reset_events() -> void:
-	events = {"shots": [], "deaths": [], "destroyed": [], "explosions": [], "fps": []}
+	events = {"shots": [], "deaths": [], "destroyed": [], "explosions": [], "fps": [], "report": {}}
 
 
 # ───────────── экономика ─────────────
@@ -123,12 +127,74 @@ func eco_take_turret(weapon: String) -> bool:
 	return eco_spend(Cfg.turret_cost(weapon))
 
 
+# ───────────── очки игроков ─────────────
+
+static func _new_score() -> Dictionary:
+	return {"score": 0.0, "kills": 0, "deaths": 0, "dmg": 0.0, "wave_score": 0.0, "wave_kills": 0}
+
+
+func _score_of(id: int) -> int:
+	return int(round(float(scores.get(id, {}).get("score", 0.0))))
+
+
+## Нанесённый урон: 1 очко за каждые SCORE.damage_per_point единиц.
+func score_damage(src: int, amount: float) -> void:
+	if src == 0 or not scores.has(src) or amount <= 0.0:
+		return
+	var s: Dictionary = scores[src]
+	var pts := amount / float(Cfg.SCORE["damage_per_point"])
+	s["dmg"] += amount
+	s["score"] += pts
+	s["wave_score"] += pts
+
+
+## Добивание: очки по типу зомби. src = 0 — убийство автоматической турелью.
+func score_kill(src: int, type: String) -> void:
+	if src == 0 or not scores.has(src):
+		auto_kills += 1
+		auto_wave_kills += 1
+		return
+	var s: Dictionary = scores[src]
+	var pts := float(Cfg.ZOMBIES[type]["score"])
+	s["kills"] += 1
+	s["wave_kills"] += 1
+	s["score"] += pts
+	s["wave_score"] += pts
+
+
+func score_death(pid: int) -> void:
+	if not scores.has(pid):
+		return
+	var s: Dictionary = scores[pid]
+	s["deaths"] += 1
+	s["score"] += float(Cfg.SCORE["death"])
+	s["wave_score"] += float(Cfg.SCORE["death"])
+
+
+## Рейтинг по итогам волны (уходит клиентам в снапшоте) и сброс счётчиков волны.
+func _wave_report() -> void:
+	var rows: Array = []
+	for id in scores.keys():
+		var s: Dictionary = scores[id]
+		rows.append({"id": id, "name": players.get(id, {}).get("name", "?"),
+			"wave_score": int(round(float(s["wave_score"]))), "wave_kills": int(s["wave_kills"]),
+			"score": int(round(float(s["score"]))), "kills": int(s["kills"]), "deaths": int(s["deaths"])})
+	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return a["wave_score"] > b["wave_score"] or (a["wave_score"] == b["wave_score"] and a["score"] > b["score"]))
+	events["report"] = {"wave": wave, "rows": rows, "auto_kills": auto_wave_kills}
+	for id in scores.keys():
+		scores[id]["wave_score"] = 0.0
+		scores[id]["wave_kills"] = 0
+	auto_wave_kills = 0
+
+
 # ───────────── игроки ─────────────
 
 func add_player(id: int) -> String:
 	var name := "Player %d" % id
 	players[id] = {"name": name}
 	fps.add(id)
+	scores[id] = _new_score()
 	if host_id == 0:
 		host_id = id
 	return name
@@ -137,6 +203,7 @@ func add_player(id: int) -> String:
 func remove_player(id: int) -> void:
 	players.erase(id)
 	fps.remove(id)
+	scores.erase(id)
 	turrets.release_player(id)
 	if host_id == id:
 		host_id = 0
@@ -174,6 +241,10 @@ func restart() -> bool:
 	eco_reset()
 	turrets.reset()
 	build.reset()
+	for id in scores.keys():
+		scores[id] = _new_score()
+	auto_kills = 0
+	auto_wave_kills = 0
 	wave = 1
 	_enter_preparation()
 	return true
@@ -229,6 +300,7 @@ func tick(dt: float) -> void:
 					on_game_over.call()
 			elif _wave_finished():
 				state = "WaveCompleted"
+				_wave_report()
 		"WaveCompleted":
 			wave += 1
 			_enter_preparation()
@@ -314,14 +386,16 @@ func snapshot() -> Dictionary:
 	for id in players.keys():
 		var tur := turrets.turret_of(int(id))
 		pl.append({"id": id, "name": players[id]["name"], "is_host": int(id) == host_id,
-			"turret_id": tur.id if tur != null else 0, "fps": fps.snapshot_of(int(id))})
+			"turret_id": tur.id if tur != null else 0, "fps": fps.snapshot_of(int(id)),
+			"score": _score_of(int(id)), "kills": int(scores.get(id, {}).get("kills", 0)),
+			"deaths": int(scores.get(id, {}).get("deaths", 0))})
 	var s := {
 		"state": state, "wave": wave, "prep_left": int(ceil(maxf(0.0, prep_left))),
 		"money": money, "walls_left": wall_stock, "turrets_left": turret_stock,
 		"zombies": zombies.snapshot(), "turrets": turrets.snapshot(), "players": pl,
 		"rockets": turrets.rockets_snapshot(),
 		"shots": events["shots"], "deaths": events["deaths"], "destroyed": events["destroyed"],
-		"explosions": events["explosions"], "fps_events": events["fps"],
+		"explosions": events["explosions"], "fps_events": events["fps"], "report": events["report"], "auto_kills": auto_kills,
 		"killed": zombies_killed, "earned": money_earned,
 	}
 	_reset_events()

@@ -17,6 +17,7 @@ var next: int = 1
 var travelled: float = 0.0
 var burn_left: float = 0.0     # поджог: сколько ещё горит и сколько урона в секунду
 var burn_dps: float = 0.0
+var burn_src: int = 0         # кто поджёг (очки за урон от горения)
 
 
 func snapshot() -> Dictionary:

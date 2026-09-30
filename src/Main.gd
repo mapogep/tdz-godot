@@ -22,6 +22,7 @@ var is_client := false
 var _acc := 0.0
 var _walls_rev := -1
 var _prev_snap: Dictionary = {}
+var _seen_types: Dictionary = {}     # какие типы зомби уже встречались (подсказка о новом враге)
 var _frame := 0
 var _args: Dictionary = {}
 var _scenario_steps: Array = []
@@ -165,7 +166,12 @@ func _build_game() -> void:
 	input_ctl.cam_rig = cam_rig
 	input_ctl.hud = hud
 	input_ctl.vm = vm
-	world.free_fired.connect(func() -> void: vm.fire())
+	world.free_fired.connect(func() -> void:
+		vm.fire()
+		var fwd := -cam_rig.cam.global_transform.basis.z
+		var right := cam_rig.cam.global_transform.basis.x
+		world.fx.muzzle_sparks(vm.muzzle_global(), fwd, "ak")
+		world.fx.casing(vm.muzzle_global() - fwd * 0.45 + right * 0.05, right + fwd * 0.2))
 	world.free_swung.connect(func(m: String) -> void: vm.swing(float(Cfg.PWEAPONS[m]["cooldown"]) * 0.95))
 	world.free_reloading.connect(func() -> void: vm.reload(float(Cfg.PWEAPONS["ak"]["reload"])))
 	world.free_hurt.connect(func(a: float) -> void:
@@ -278,6 +284,14 @@ func _react_to_changes(old: Dictionary, cur: Dictionary) -> void:
 	if old["state"] != "WaveRunning" and cur["state"] == "WaveRunning":
 		Sfx.play("wave_start")
 		hud.banner("%s %d" % [I18n.t("wave"), int(cur["wave"])])
+		var comp := Cfg.wave_composition(int(cur["wave"]))
+		for zt in ["brute", "boomer", "armored"]:
+			if comp.has(zt) and not _seen_types.has(zt):
+				_seen_types[zt] = true
+				hud.announce(I18n.t("zd_" + zt))
+				break
+	if not (cur.get("report", {}) as Dictionary).is_empty():
+		hud.show_report(cur["report"])
 	if old["state"] != "GameOver" and cur["state"] == "GameOver":
 		Sfx.play("game_over")
 		postfx.flash(0.8)
@@ -394,6 +408,7 @@ func _setup_scenario(name: String) -> void:
 				[60, func() -> void:
 					if name == "free_melee":
 						input_ctl._set_free_weapon("melee")
+						return
 					world.free_yaw = -PI / 2.0 + 0.1
 					input_ctl._free_fire = true
 					input_ctl._send_free(true)]]
@@ -406,6 +421,36 @@ func _setup_scenario(name: String) -> void:
 		"panel":
 			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 8; sim.turret_stock = 8],
 				[5, build], [15, func() -> void: input_ctl.select_turret(sim.turrets.turrets.keys()[0])]]
+		"sparks":
+			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 12; sim.turret_stock = 8],
+				[5, build], [10, func() -> void: _on_command(1, {"t": "startWave"})],
+				[12, func() -> void: cam_rig.focus_target = Vector3(8, 0, 13); cam_rig.dist_target = 5.0]]
+		"soldier":
+			_scenario_steps = [[3, func() -> void: sim.add_player(2); sim.handle(2, {"t": "fpsEnter"})],
+				[6, func() -> void: sim.handle(2, {"t": "fpsMove", "x": 18.2, "z": 9.0, "yaw": -2.4, "pitch": 0.0, "fire": false})],
+				[8, func() -> void: cam_rig.focus_target = Vector3(18.0, 0.8, 9.0); cam_rig.dist_target = 3.6; cam_rig.yaw_target = -2.0]]
+		"zoo":
+			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 10; sim.turret_stock = 8],
+				[5, build], [10, func() -> void: _on_command(1, {"t": "startWave"})],
+				[12, func() -> void:
+					var types := ["normal", "fat", "fast", "armored", "boomer", "brute"]
+					for i in types.size():
+						sim.zombies.spawn(10, types[i])
+						var zz: SimZombie = sim.zombies.zombies.values()[sim.zombies.zombies.size() - 1]
+						zz.x = 2.0 + i * 1.1
+						zz.z = 4.5
+						zz.hp = 1e6
+					cam_rig.focus_target = Vector3(5.0, 0.8, 4.5); cam_rig.dist_target = 7.5; cam_rig.yaw_target = 0.0]]
+		"report":
+			_scenario_steps = [[3, func() -> void: sim.add_player(2); sim.players[2]["name"] = "Vasya"],
+				[5, func() -> void: _on_command(1, {"t": "startWave"})],
+				[30, func() -> void:
+					sim.score_damage(2, 300.0)
+					sim.score_kill(2, "fat")
+					for z: SimZombie in sim.zombies.zombies.values():
+						sim.zombies.damage(z.id, 1e6, 1, "bullet")]]
+		"overview":
+			_scenario_steps = [[5, func() -> void: cam_rig.dist_target = 46.0; cam_rig.yaw_target = 0.5; cam_rig.focus_target = Vector3(4, 0, 10)]]
 		"fps_mg", "fps_flame", "fps_rocket", "fps_gun":
 			var w := name.substr(4)
 			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 8; sim.turret_stock = 8],

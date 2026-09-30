@@ -10,7 +10,7 @@ const ICON := {
 	"gun": "res://assets/tex/icon-turret.png", "machinegun": "res://assets/tex/icon-machinegun.png",
 	"rocket": "res://assets/tex/icon-rocket.png", "flame": "res://assets/tex/icon-flame.png",
 }
-const ZOMBIE_COLOR := {"normal": "#6fae4f", "fat": "#a8863a", "fast": "#e8d040"}
+const ZOMBIE_COLOR := {"normal": "#6fae4f", "fat": "#a8863a", "fast": "#e8d040", "armored": "#8fa3b8", "boomer": "#a6e03a", "brute": "#e0503a"}
 
 var st: ClientState
 var root: Control
@@ -87,6 +87,17 @@ var _sig_players := ""
 var _sig_incoming := ""
 var _reload_start := 0.0
 var _toast_tw: Tween
+var _announce: Label
+var _announce_tw: Tween
+var _report: PanelContainer
+var _report_title: Label
+var _report_grid: GridContainer
+var _report_auto: Label
+var _report_tw: Tween
+var _board: PanelContainer
+var _board_grid: GridContainer
+var _board_sig := ""
+var _over_grid: GridContainer
 var _banner_tw: Tween
 
 
@@ -113,6 +124,7 @@ func build(p_st: ClientState) -> void:
 	_build_free_fps()
 	_build_pause()
 	_build_game_over()
+	_build_scores()
 	_build_menu_overlay()
 	I18n.language_changed.connect(func() -> void:
 		_sig_tools = ""
@@ -486,6 +498,7 @@ func damage_flash(amount: float) -> void:
 
 func _process(delta: float) -> void:
 	_fit_panels()
+	_update_board()
 	if _vignette != null:
 		_vig_t = maxf(0.0, _vig_t - delta * 1.2)
 		var low := 0.0
@@ -601,6 +614,12 @@ func _build_game_over() -> void:
 	_over_lines = _label("", 22)
 	_over_lines.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(_over_lines)
+	_over_grid = GridContainer.new()
+	_over_grid.columns = 5
+	_over_grid.add_theme_constant_override("h_separation", 22)
+	var og := CenterContainer.new()
+	og.add_child(_over_grid)
+	v.add_child(og)
 	_over_restart = _button("", func() -> void: action.emit("restart", null), "primary")
 	_over_restart.custom_minimum_size = Vector2(240, 46)
 	v.add_child(_over_restart)
@@ -757,7 +776,9 @@ func _refresh_incoming(s: Dictionary) -> void:
 		_incoming.visible = false
 		return
 	_incoming.visible = true
-	var counts := {"normal": 0, "fat": 0, "fast": 0}
+	var counts := {}
+	for zt in Cfg.ZOMBIE_TYPES:
+		counts[zt] = 0
 	for z in Cfg.wave_composition(int(s["wave"])):
 		counts[z] += 1
 	var bb := "[color=#b9a58c]%s:[/color] " % I18n.t("incoming")
@@ -772,7 +793,7 @@ func _refresh_incoming(s: Dictionary) -> void:
 func _refresh_players(s: Dictionary) -> void:
 	var sig := ""
 	for p in s["players"]:
-		sig += "%s|%s|%s|%s;" % [p["id"], p["name"], p["is_host"], p["turret_id"]]
+		sig += "%s|%s|%s|%s|%s;" % [p["id"], p["name"], p["is_host"], p["turret_id"], p.get("score", 0)]
 	sig += I18n.lang
 	if sig == _sig_players:
 		return
@@ -784,6 +805,7 @@ func _refresh_players(s: Dictionary) -> void:
 		row.add_theme_constant_override("separation", 6)
 		var you := int(p["id"]) == st.my_id
 		row.add_child(_label("%s%s" % [p["name"], " (%s)" % I18n.t("you") if you else ""], 14))
+		row.add_child(_label("%d" % int(p.get("score", 0)), 13, UiTheme.ACCENT))
 		if p["is_host"]:
 			row.add_child(_label(I18n.t("host"), 11, UiTheme.ACCENT))
 		if int(p["turret_id"]) != 0:
@@ -959,4 +981,152 @@ func _refresh_game_over(s: Dictionary) -> void:
 	_over_lines.text = "%s: %d\n%s: %d\n%s: $%d" % [I18n.t("wave"), int(s["wave"]), I18n.t("zombies_killed"), int(s["killed"]),
 		I18n.t("money_earned"), int(s["earned"])]
 	_over_restart.visible = st.is_host()
+	var rows: Array = []
+	for p in _players_by_score(s):
+		rows.append([str(rows.size() + 1), _pname(p), str(int(p.get("score", 0))), str(int(p.get("kills", 0))), str(int(p.get("deaths", 0))), int(p["id"]) == st.my_id])
+	_fill_grid(_over_grid, [I18n.t("rank"), I18n.t("player"), I18n.t("score"), I18n.t("kills"), I18n.t("deaths")], rows)
 	_over_wait.visible = not st.is_host()
+
+
+# ───────────────────────── очки и рейтинг ─────────────────────────
+
+func _build_scores() -> void:
+	# рейтинг по итогам волны
+	_report = PanelContainer.new()
+	_report.mouse_filter = Control.MOUSE_FILTER_STOP
+	_report.visible = false
+	root.add_child(_report)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	_report.add_child(v)
+	_report_title = _label("", 24, UiTheme.ACCENT)
+	_report_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(_report_title)
+	_report_grid = GridContainer.new()
+	_report_grid.columns = 5
+	_report_grid.add_theme_constant_override("h_separation", 22)
+	_report_grid.add_theme_constant_override("v_separation", 4)
+	v.add_child(_report_grid)
+	_report_auto = _label("", 13, Color(UiTheme.TEXT, 0.7))
+	_report_auto.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(_report_auto)
+	var hint := _label("", 11, Color(UiTheme.TEXT, 0.5))
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.set_meta("i18n", "close_hint")
+	v.add_child(hint)
+	_report.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, Control.PRESET_MODE_MINSIZE, 170)
+	_report.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_report.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton and ev.pressed:
+			_report.visible = false)
+	# таблица счёта (удерживать Tab)
+	_board = PanelContainer.new()
+	_board.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_board.visible = false
+	root.add_child(_board)
+	var bv := VBoxContainer.new()
+	bv.add_theme_constant_override("separation", 8)
+	_board.add_child(bv)
+	var bt := _label("", 22, UiTheme.ACCENT)
+	bt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	bt.set_meta("i18n", "scoreboard")
+	bv.add_child(bt)
+	_board_grid = GridContainer.new()
+	_board_grid.columns = 5
+	_board_grid.add_theme_constant_override("h_separation", 26)
+	_board_grid.add_theme_constant_override("v_separation", 4)
+	bv.add_child(_board_grid)
+	_board.set_anchors_and_offsets_preset(Control.PRESET_CENTER, Control.PRESET_MODE_MINSIZE)
+	_board.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_board.grow_vertical = Control.GROW_DIRECTION_BOTH
+	# крупное сообщение на несколько секунд (новый тип врага)
+	_announce = _label("", 21, Color("ffd9a0"))
+	_announce.add_theme_constant_override("outline_size", 6)
+	_announce.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_announce.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_announce.custom_minimum_size = Vector2(760, 0)
+	_announce.modulate.a = 0.0
+	_announce.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(_announce)
+	_announce.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, Control.PRESET_MODE_MINSIZE, 172)
+	_announce.grow_horizontal = Control.GROW_DIRECTION_BOTH
+
+
+func _pname(p: Dictionary) -> String:
+	return "%s%s" % [p["name"], " (%s)" % I18n.t("you") if int(p["id"]) == st.my_id else ""]
+
+
+func _players_by_score(s: Dictionary) -> Array:
+	var list: Array = (s.get("players", []) as Array).duplicate()
+	list.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.get("score", 0)) > int(b.get("score", 0)))
+	return list
+
+
+## Таблица: заголовки + строки [ячейки…, своя_строка: bool].
+func _fill_grid(grid: GridContainer, headers: Array, rows: Array) -> void:
+	for c in grid.get_children():
+		c.queue_free()
+	for h in headers:
+		grid.add_child(_label(str(h), 13, Color(UiTheme.TEXT, 0.6)))
+	for r in rows:
+		var mine: bool = r[r.size() - 1]
+		for i in r.size() - 1:
+			var l := _label(str(r[i]), 17, UiTheme.ACCENT if mine else UiTheme.TEXT)
+			if i >= 2:
+				l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			grid.add_child(l)
+
+
+## Рейтинг по итогам волны: показывается 10 секунд (клик — закрыть).
+func show_report(rep: Dictionary) -> void:
+	_report_title.text = I18n.t("wave_rating") % int(rep["wave"])
+	var rows: Array = []
+	var rank := 0
+	for r in rep["rows"]:
+		rank += 1
+		var name := "%s%s" % [r["name"], " (%s)" % I18n.t("you") if int(r["id"]) == st.my_id else ""]
+		rows.append([str(rank), name, "+%d" % int(r["wave_score"]), str(int(r["wave_kills"])), str(int(r["score"])), int(r["id"]) == st.my_id])
+	_fill_grid(_report_grid, [I18n.t("rank"), I18n.t("player"), I18n.t("wave_pts"), I18n.t("kills"), I18n.t("score")], rows)
+	_report_auto.text = I18n.t("auto_kills") % int(rep["auto_kills"])
+	for n in _report.find_children("*", "Label", true, false):
+		if n.has_meta("i18n"):
+			n.text = I18n.t(n.get_meta("i18n"))
+	_report.visible = true
+	_report.modulate.a = 1.0
+	if _report_tw != null:
+		_report_tw.kill()
+	_report_tw = create_tween()
+	_report_tw.tween_interval(10.0)
+	_report_tw.tween_property(_report, "modulate:a", 0.0, 0.6)
+	_report_tw.tween_callback(func() -> void: _report.visible = false)
+
+
+func announce(text: String, secs: float = 6.0) -> void:
+	_announce.text = text
+	_announce.modulate.a = 1.0
+	if _announce_tw != null:
+		_announce_tw.kill()
+	_announce_tw = create_tween()
+	_announce_tw.tween_interval(secs)
+	_announce_tw.tween_property(_announce, "modulate:a", 0.0, 0.6)
+
+
+func _update_board() -> void:
+	if _board == null or st == null or not st.has_snap():
+		return
+	var show := Input.is_key_pressed(KEY_TAB) and not menu_open()
+	_board.visible = show
+	if not show:
+		return
+	var rows: Array = []
+	var sig := I18n.lang
+	for p in _players_by_score(st.snap):
+		rows.append([str(rows.size() + 1), _pname(p), str(int(p.get("score", 0))), str(int(p.get("kills", 0))), str(int(p.get("deaths", 0))), int(p["id"]) == st.my_id])
+		sig += str(rows[rows.size() - 1])
+	if sig == _board_sig:
+		return
+	_board_sig = sig
+	for n in _board.find_children("*", "Label", true, false):
+		if n.has_meta("i18n"):
+			n.text = I18n.t(n.get_meta("i18n"))
+	_fill_grid(_board_grid, [I18n.t("rank"), I18n.t("player"), I18n.t("score"), I18n.t("kills"), I18n.t("deaths")], rows)

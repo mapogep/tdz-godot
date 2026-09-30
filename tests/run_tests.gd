@@ -65,6 +65,7 @@ func _init() -> void:
 	test_weapons()
 	test_save()
 	test_free_fps()
+	test_new_types_and_scores()
 	print("\n%d passed, %d failed" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 
@@ -72,14 +73,16 @@ func _init() -> void:
 # ───────────────────────────────────────── config
 func test_config() -> void:
 	_section = "config"
-	# состав волн совпадает с исходной версией (детерминированный ГСЧ)
+	# состав волн детерминирован (тот же ГСЧ, что в исходной версии; с 6-й волны — новые типы, громилы в конце 5-х волн)
 	check("wave 1 = normal", Cfg.wave_composition(1) == ["normal"])
-	check("wave 6 composition", Cfg.wave_composition(6) == ["normal", "fat", "normal", "normal", "fast", "fast"], str(Cfg.wave_composition(6)))
-	check("wave 10 composition", Cfg.wave_composition(10) == ["fast", "fat", "normal", "normal", "fat", "fast", "normal", "normal", "normal", "fast"], str(Cfg.wave_composition(10)))
+	check("wave 6 composition", Cfg.wave_composition(6) == ["normal", "fat", "normal", "armored", "fast", "fast"], str(Cfg.wave_composition(6)))
+	check("wave 10 composition", Cfg.wave_composition(10) == ["fast", "fat", "normal", "normal", "fat", "fast", "boomer", "normal", "armored", "fast", "brute"], str(Cfg.wave_composition(10)))
 	check("wave 3 has fast, no fat", Cfg.wave_composition(3).has("fast") and not Cfg.wave_composition(3).has("fat"))
 	for w in [4, 6, 10, 25]:
 		var c := Cfg.wave_composition(w)
-		check("size wave %d" % w, c.size() == Cfg.zombie_count(w))
+		var brutes: int = (1 + (w - 10) / 20) if (w >= 10 and w % 5 == 0) else 0
+		check("size wave %d" % w, c.size() == Cfg.zombie_count(w) + brutes)
+		check("brutes last wave %d" % w, c.count("brute") == brutes and (brutes == 0 or c[c.size() - 1] == "brute"))
 		check("fat+fast wave %d" % w, c.has("fat") and c.has("fast"))
 		check("deterministic wave %d" % w, c == Cfg.wave_composition(w))
 	check("stats L10 damage", near(Cfg.turret_stats(10, "gun")["damage"], 10.0 + 9 * 2.0))
@@ -438,7 +441,7 @@ func test_zombie_types() -> void:
 	var zq: Dictionary = Cfg.ZOMBIES["fast"]
 	check("speeds", zf["speed"] < zn["speed"] and zn["speed"] < zq["speed"])
 	check("hp", zf["hp"] > zn["hp"] * 3 and zq["hp"] < zn["hp"])
-	check("scale", zf["scale"] > 1.0 and zq["scale"] < 1.0)
+	check("height", zf["height"] > zn["height"] and float(Cfg.ZOMBIES["brute"]["height"]) > zf["height"])
 	check("reward order", Cfg.zombie_reward("fat") > Cfg.zombie_reward("normal"))
 	var s := make()
 	var g: GameSim = s[0]
@@ -761,3 +764,97 @@ func test_free_fps() -> void:
 	check("F1 exit", not s6.active)
 	var snap := g6.snapshot()
 	check("snapshot has fps block", snap["players"][0].has("fps") and snap.has("fps_events"))
+
+
+# ───────────────────────────────────────── новые типы зомби и очки
+func test_new_types_and_scores() -> void:
+	_section = "types+score"
+	# броня: пули почти не берут броненосца, огонь — сильнее обычного
+	check("armored bullet", Cfg.armor_mul("armored", "bullet") < 0.6)
+	check("armored fire", Cfg.armor_mul("armored", "fire") > 1.0)
+	check("normal no armor", Cfg.armor_mul("normal", "bullet") == 1.0 and Cfg.armor_mul("normal", "blast") == 1.0)
+	var s := make(0)
+	var g: GameSim = s[0]
+	var za := spawn_at(g, "armored", 5.0, 5.0, 100.0)
+	g.zombies.damage(za.id, 40.0, 0, "bullet")
+	check("armored takes reduced bullet dmg", near(za.hp, 100.0 - 40.0 * Cfg.armor_mul("armored", "bullet")), str(za.hp))
+	g.zombies.damage(za.id, 20.0, 0, "fire")
+	check("armored takes extra fire dmg", near(za.hp, 100.0 - 40.0 * Cfg.armor_mul("armored", "bullet") - 20.0 * Cfg.armor_mul("armored", "fire")))
+
+	# очки: добивание игроком, урон, автоматика
+	s = make(0)
+	g = s[0]
+	var host: int = s[1]
+	var z1 := spawn_at(g, "normal", 5.0, 5.0, 40.0)
+	g.zombies.damage(z1.id, 40.0, host, "bullet")
+	var sc: Dictionary = g.scores[host]
+	check("kill counted", sc["kills"] == 1 and sc["wave_kills"] == 1)
+	check("kill score", near(sc["score"], float(Cfg.ZOMBIES["normal"]["score"]) + 40.0 / float(Cfg.SCORE["damage_per_point"])), str(sc["score"]))
+	var z2 := spawn_at(g, "fast", 6.0, 5.0, 10.0)
+	g.zombies.damage(z2.id, 99.0, 0, "bullet")
+	check("auto kill", g.auto_kills == 1 and g.scores[host]["kills"] == 1)
+	check("damage beyond hp not scored", near(g.scores[host]["dmg"], 40.0))
+	# поджог засчитывается поджигателю
+	var z3 := spawn_at(g, "normal", 7.0, 5.0, 10.0)
+	g.zombies.ignite(z3.id, 100.0, 2.0, s[2])
+	g.zombies.update(0.2)
+	check("burn kill credited", g.scores[s[2]]["kills"] == 1)
+	# рейтинг волны в снапшоте и сброс счётчиков волны
+	g.state = "WaveRunning"
+	g.zombies.clear()
+	g._queue.clear()
+	g.tick(0.05)
+	var snap := g.snapshot()
+	var rep: Dictionary = snap["report"]
+	check("report present", not rep.is_empty() and rep["rows"].size() == 2)
+	check("report sorted", rep["rows"][0]["wave_score"] >= rep["rows"][1]["wave_score"])
+	check("report auto kills", rep["auto_kills"] == 1)
+	check("wave counters reset", g.scores[host]["wave_kills"] == 0 and g.scores[host]["kills"] == 1)
+	check("report once", g.snapshot()["report"].is_empty())
+	check("snapshot score", int(snap["players"][0]["score"]) >= 0 and snap["players"][0].has("kills"))
+
+	# взрывун: при смерти ранит соседей и турели, награда и очки — добившему
+	s = make(1000)
+	g = s[0]
+	host = s[1]
+	g.handle(host, {"t": "buildTurret", "x": 6, "y": 6, "weapon": "gun"})
+	var tur := g.turrets.at_cell(6, 6)
+	var hp0 := tur.hp
+	var boom := spawn_at(g, "boomer", 5.5, 4.6, 10.0)
+	var near_z := spawn_at(g, "normal", 5.0, 4.2, 30.0)
+	var far_z := spawn_at(g, "normal", 15.0, 15.0, 30.0)
+	g.zombies.damage(boom.id, 50.0, host, "bullet")
+	check("boomer explosion event", g.events["explosions"].size() == 1)
+	check("boomer kills neighbour", not g.zombies.zombies.has(near_z.id))
+	check("far zombie untouched", near(far_z.hp, 30.0))
+	check("turret damaged by blast", g.turrets.turrets.has(tur.id) and tur.hp < hp0)
+	check("neighbour kill credited to killer", g.scores[host]["kills"] == 2)
+	# взрывун у турели взрывается сам, без награды
+	s = make(1000)
+	g = s[0]
+	host = s[1]
+	for y in range(1, 21):
+		if y != 10:
+			g.handle(host, {"t": "buildWall", "x": 8, "y": y})
+	g.handle(host, {"t": "buildTurret", "x": 8, "y": 10, "weapon": "gun"})
+	var gate := g.turrets.at_cell(8, 10)
+	g.turrets.turrets[gate.id].hp = 10000.0
+	g.zombies.spawn(5, "boomer")
+	g.state = "WaveRunning"
+	var money0 := g.money
+	run(g, 12.0)
+	check("boomer suicided at turret", g.zombies.count() == 0 and g.money == money0, "count %d money %d" % [g.zombies.count(), g.money - money0])
+	check("turret hurt by suicide", g.turrets.turrets[gate.id].hp < 10000.0)
+
+	# громила: босс в конце 5-й волны, много HP
+	check("brute hp", Cfg.zombie_hp(10, "brute") > Cfg.zombie_hp(10, "fat") * 1.5)
+	check("wave 10 ends with brute", Cfg.wave_composition(10)[-1] == "brute")
+	check("no brute on wave 5", not Cfg.wave_composition(5).has("brute"))
+	check("two brutes on wave 30", Cfg.wave_composition(30).count("brute") == 2)
+
+	# игрок погиб — штраф в очках
+	s = make(0)
+	g = s[0]
+	g.handle(1, {"t": "fpsEnter"})
+	g.fps.hurt(g.fps.get_player(1), 999.0)
+	check("death penalty", g.scores[1]["deaths"] == 1 and near(g.scores[1]["score"], float(Cfg.SCORE["death"])))

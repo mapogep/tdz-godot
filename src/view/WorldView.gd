@@ -712,15 +712,22 @@ func _play_events(s: Dictionary) -> void:
 			var rig: TurretRig = v["rig"]
 			if weapon != "flame":
 				rig.kick()
+		var sdir := (to - from).normalized() if to.distance_to(from) > 0.01 else Vector3.FORWARD
+		var side := sdir.cross(Vector3.UP).normalized()
 		match weapon:
 			"machinegun":
 				fx.tracer(from, to, Color("fff0b0"), 0.012)
 				fx.muzzle_flash(from, 0.12 if own else 0.5)
+				if not own:
+					fx.muzzle_sparks(from, sdir, "machinegun")
+				if randf() < 0.5:
+					fx.casing(from - sdir * 0.35 + Vector3(0, 0.05, 0), side)
 				if not v.is_empty():
 					(v["rig"] as TurretRig).spin_up()
 				Sfx.play("mg", from)
 			"rocket":
 				fx.muzzle_flash(from, 0.2 if own else 1.4)
+				fx.muzzle_sparks(from, sdir, "rocket")
 				if not own:
 					fx.smoke_puff(from, 6)
 				Sfx.play("rocket", from)
@@ -730,6 +737,9 @@ func _play_events(s: Dictionary) -> void:
 			_:
 				fx.tracer(from, to, Color.WHITE if sh["manual"] else Color("ffd27a"))
 				fx.muzzle_flash(from, 0.25 if own else 1.0)
+				if not own:
+					fx.muzzle_sparks(from, sdir, "gun")
+				fx.casing(from - sdir * 0.4 + Vector3(0, 0.05, 0), side, true)
 				Sfx.play("shot_manual" if sh["manual"] else "shot", from)
 		if own:
 			own_shot.emit(weapon)
@@ -739,7 +749,7 @@ func _play_events(s: Dictionary) -> void:
 			continue
 		var hit := int(sh["hit"])
 		if hit != 0:
-			fx.sparks(to, Color("ff5a4a"), 3 if weapon == "machinegun" else 5)
+			fx.blood_hit(to, sdir, 5 if weapon == "machinegun" else 8)
 			var zv: Dictionary = zombie_views.get(hit, {})
 			if not zv.is_empty():
 				zv["flash"] = 0.12
@@ -748,10 +758,13 @@ func _play_events(s: Dictionary) -> void:
 				hit_confirmed.emit()
 				Sfx.play("hit")
 		else:
-			fx.sparks(to, Color("cccccc"), 2)
+			fx.impact_ground(Vector3(to.x, maxf(to.y, 0.02), to.z), sdir)
 	for e in s["explosions"]:
 		var p := Vector3(e["x"], e["y"], e["z"])
-		fx.blast(p, float(e["radius"]))
+		if str(e.get("kind", "")) == "acid":
+			fx.acid_blast(p, float(e["radius"]))
+		else:
+			fx.blast(p, float(e["radius"]))
 		Sfx.play("boom", p)
 	for d in s["destroyed"]:
 		var y := _lift(d["elevated"]) + 0.8
@@ -841,11 +854,14 @@ func _play_fps_events(list: Array) -> void:
 				else:
 					Sfx.play("ak", from, 0.0)
 				fx.tracer(from, to, Color("ffe2a0"), 0.014)
+				var adir := (to - from).normalized()
 				if not own:
 					fx.muzzle_flash(from, 0.7)
+					fx.muzzle_sparks(from, adir, "ak")
+					fx.casing(from - adir * 0.5, adir.cross(Vector3.UP))
 				var hit := int(e["hit"])
 				if hit != 0:
-					fx.sparks(to, Color("ff5a4a"), 4)
+					fx.blood_hit(to, adir, 7)
 					var zv: Dictionary = zombie_views.get(hit, {})
 					if not zv.is_empty():
 						zv["flash"] = 0.12
@@ -854,7 +870,7 @@ func _play_fps_events(list: Array) -> void:
 						hit_confirmed.emit()
 						Sfx.play("hit")
 				else:
-					fx.sparks(to, Color("cccccc"), 2)
+					fx.impact_ground(Vector3(to.x, maxf(to.y, 0.02), to.z), adir)
 			"swing":
 				var melee := str(e["melee"])
 				if own:
@@ -869,7 +885,7 @@ func _play_fps_events(list: Array) -> void:
 						continue
 					zv2["flash"] = 0.15
 					var zp := Vector3(zv2["x"], 1.1, zv2["z"])
-					fx.sparks(zp, Color("b03020"), 6)
+					fx.blood_hit(zp, Vector3(zp.x, 0, zp.z) - Vector3(free_pos.x, 0, free_pos.z) if own else Vector3.UP, 10)
 					fx.blood_decal(Vector3(zp.x, 0.0, zp.z))
 					Sfx.play("chop", zp)
 					if own:
@@ -940,7 +956,7 @@ func _process(delta: float) -> void:
 		if moved > 0.0001:
 			var target := atan2(dx, dz)
 			v["heading"] = float(v["heading"]) + wrapf(target - float(v["heading"]), -PI, PI) * minf(1.0, delta * 10.0)
-		v["phase"] = float(v["phase"]) + moved * 7.0
+		v["phase"] = float(v["phase"]) + moved * TAU / rig.stride
 		rig.position.x = v["x"]
 		rig.position.z = v["z"]
 		rig.rotation.y = v["heading"]

@@ -213,7 +213,7 @@ func _shoot(p: SimPlayer) -> void:
 	var to := origin + dir * hit_t
 	_ev({"k": "shot", "pid": p.id, "from": origin, "to": to, "hit": hit.id if hit != null else 0})
 	if hit != null:
-		sim.zombies.damage(hit.id, float(w["damage"]))
+		sim.zombies.damage(hit.id, float(w["damage"]), p.id, "bullet")
 
 
 func _swing(p: SimPlayer) -> void:
@@ -230,7 +230,7 @@ func _swing(p: SimPlayer) -> void:
 		hits.append(z.id)
 	_ev({"k": "swing", "pid": p.id, "melee": p.melee, "hits": hits})
 	for id in hits:
-		sim.zombies.damage(int(id), float(w["damage"]))
+		sim.zombies.damage(int(id), float(w["damage"]), p.id, "melee")
 
 
 # ───────────── урон игроку ─────────────
@@ -257,6 +257,7 @@ func hurt(p: SimPlayer, amount: float) -> void:
 	if p.hp <= 0.0:
 		p.hp = 0.0
 		p.alive = false
+		sim.score_death(p.id)
 		p.active = false
 		p.fire = false
 		_ev({"k": "die", "pid": p.id, "x": p.x, "z": p.z})

@@ -258,13 +258,13 @@ func _shoot(t: SimTurret, target: SimZombie, has_aim: bool, aim_point: Vector3) 
 				sim.events["shots"].append({
 					"turret": t.id, "weapon": t.weapon, "from": from,
 					"to": Vector3(target.x, target.height * 0.5, target.z), "hit": target.id, "manual": false})
-				sim.zombies.damage(target.id, damage)
+				sim.zombies.damage(target.id, damage, 0, "bullet")
 				return
 			_fire_ray(t, from, _jitter(dir, float(w["spread"])), float(st["range"]), damage, manual)
 		"rocket":
 			var start := from + dir * 0.6
 			_launch(start, dir, float(w["speed"]), damage, float(w["splash"]), float(st["range"]) * 1.4,
-				float(w["edge"]), damage * float(w["burn"]), float(w["burn_time"]))
+				float(w["edge"]), damage * float(w["burn"]), float(w["burn_time"]), t.controlled_by)
 			sim.events["shots"].append({
 				"turret": t.id, "weapon": t.weapon, "from": start, "to": start + dir * 2.0, "hit": 0, "manual": manual})
 		"flame":
@@ -285,7 +285,7 @@ func _fire_ray(t: SimTurret, origin: Vector3, dir: Vector3, range_m: float, dama
 		"turret": t.id, "weapon": t.weapon, "from": origin, "to": to,
 		"hit": hit.id if hit != null else 0, "manual": manual})
 	if hit != null:
-		sim.zombies.damage(hit.id, damage)
+		sim.zombies.damage(hit.id, damage, t.controlled_by, "bullet")
 
 
 ## Огнемёт: рассеянный урон по конусу. Чем дальше от сопла и от оси струи, тем слабее удар
@@ -307,9 +307,9 @@ func _burn(t: SimTurret, origin: Vector3, dir: Vector3, range_m: float, damage: 
 		any_id = z.id
 		var k_dist := 1.0 - (1.0 - float(w["edge"])) * minf(1.0, dist / (range_m + z.radius))
 		var k_angle := 1.0 - 0.4 * minf(1.0, angle / (half_angle + slack))
-		var res = sim.zombies.damage(z.id, damage * k_dist * k_angle)
+		var res = sim.zombies.damage(z.id, damage * k_dist * k_angle, t.controlled_by, "fire")
 		if res != null and not res["killed"]:
-			sim.zombies.ignite(z.id, burn_dps * k_dist, float(w["burn_time"]))
+			sim.zombies.ignite(z.id, burn_dps * k_dist, float(w["burn_time"]), t.controlled_by)
 	sim.events["shots"].append({
 		"turret": t.id, "weapon": t.weapon, "from": origin, "to": origin + dir * range_m, "hit": any_id, "manual": manual})
 
@@ -324,8 +324,9 @@ func _jitter(dir: Vector3, spread: float) -> Vector3:
 # ───────────── ракеты ─────────────
 
 func _launch(from: Vector3, dir: Vector3, speed: float, damage: float, splash: float, max_dist: float,
-		edge: float, burn_dps: float, burn_time: float) -> void:
+		edge: float, burn_dps: float, burn_time: float, src: int = 0) -> void:
 	rockets[_next_rocket] = {
+		"src": src,
 		"id": _next_rocket, "p": from, "d": dir, "speed": speed, "damage": damage, "splash": splash,
 		"edge": edge, "burn_dps": burn_dps, "burn_time": burn_time, "travelled": 0.0, "max": max_dist,
 	}
@@ -379,9 +380,9 @@ func _explode(r: Dictionary, direct: int) -> void:
 			continue
 		# урон рассеивается от центра к краю: в эпицентре 100%, на границе — edge; всех задетых поджигает
 		var k := 1.0 if z.id == direct else 1.0 - (1.0 - float(r["edge"])) * minf(1.0, d / reach)
-		var res = sim.zombies.damage(z.id, float(r["damage"]) * k)
+		var res = sim.zombies.damage(z.id, float(r["damage"]) * k, int(r["src"]), "blast")
 		if res != null and not res["killed"] and float(r["burn_dps"]) > 0.0:
-			sim.zombies.ignite(z.id, float(r["burn_dps"]) * k, float(r["burn_time"]))
+			sim.zombies.ignite(z.id, float(r["burn_dps"]) * k, float(r["burn_time"]), int(r["src"]))
 
 
 func rockets_snapshot() -> Array:

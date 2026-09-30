@@ -1,13 +1,14 @@
 class_name Scenery
 extends Node3D
-## Постапокалиптическое окружение за пределами поля: дороги, брошенные машины, руины города и посёлка,
-## лагерь выживших у восточных ворот, мёртвый лес, обломки, ворота с кострами.
-## Всё из моделей Kenney (единый стиль), расставленных MultiMesh-ами; шейдер wasteland даёт общий вид.
-## Только визуал.
+## Постапокалиптическое окружение за пределами поля: дороги с ржавыми остовами машин, разрушенные дома,
+## сторожевые вышки у ворот, лагерь выживших, мёртвый лес, обломки, ворота с кострами.
+## Крупные предметы — сгенерированные модели (assets/models/baked), мелочь и дальний город — модели Kenney
+## под шейдером wasteland. Всё расставлено MultiMesh-ами. Только визуал.
 
 var flicker_lights: Array = []          # [{light, base, phase}]
 var smoke_sources: Array[Vector3] = []
 var _buckets: Dictionary = {}           # "модель|near" -> Array[Transform3D]
+var _baked: Dictionary = {}             # запечённая модель -> Array[Transform3D]
 var _rng := RandomNumberGenerator.new()
 var _mid := 10.0
 var _fs := 20
@@ -27,6 +28,7 @@ func build(nav: NavSim, quality: int, soft: GradientTexture2D) -> void:
 	_west()
 	_east()
 	_wilderness()
+	_towers()
 	_flush()
 	_gates()
 
@@ -114,14 +116,12 @@ func _roads() -> void:
 
 
 func _west() -> void:
-	var cars := ["sedan", "suv", "van", "truck", "taxi", "police", "garbage-truck", "delivery"]
-	_fill(cars, 9, -44, -4, _mid - 5.5, _mid + 5.5, Vector2(1.35, 1.6), 0.16, 0.06, false, true)
-	_fill(["ambulance", "firetruck", "tractor"], 3, -40, -8, _mid - 5, _mid + 5, Vector2(1.4, 1.6), 0.12, 0.05, false, true)
+	_fill_baked("car_wreck", 10, -44, -4, _mid - 5.5, _mid + 5.5, Vector2(4.2, 4.9), 0.1, 0.04, true)
+	_fill(["firetruck", "garbage-truck"], 2, -40, -8, _mid - 5, _mid + 5, Vector2(1.4, 1.6), 0.12, 0.05, false, true)
 	_fill(["debris-tire", "debris-door", "debris-bumper", "debris-plate-a", "debris-plate-b", "debris-drivetrain",
 		"debris-door-window", "wheel-default", "debris", "debris-wood"], 70, -46, -3, _mid - 9, _mid + 9, Vector2(1.6, 2.6), 0.0, 0.0, false, true)
 	_fill(["crate", "crate-color", "crate-small"], 14, -30, -4, _mid - 8, _mid + 8, Vector2(2, 3))
-	_fill(["building-type-a", "building-type-b", "building-type-c", "building-type-d", "building-type-f", "building-type-h", "building-type-k"],
-		12, -60, -12, -18, _fs + 18, Vector2(4.6, 6.0), 0.05, 0.05, true)
+	_fill_baked("ruined_house", 9, -60, -12, -18, _fs + 18, Vector2(7.0, 9.5), 0.03, 0.05)
 	_fill(["low-detail-building-a", "low-detail-building-c", "low-detail-building-e", "low-detail-building-h", "low-detail-building-wide-a"],
 		8, -70, -30, -25, _fs + 25, Vector2(5.0, 7.5), 0.04, 0.05, true)
 
@@ -133,10 +133,10 @@ func _east() -> void:
 	_fill(low, 34, _fs + 12, _fs + 62, -22, _fs + 22, Vector2(4.5, 8.0), 0.0, 0.05, true)
 	_fill(["building-a", "building-d", "building-g"], 10, _fs + 10, _fs + 42, -16, _fs + 16, Vector2(4.2, 5.4), 0.0, 0.04, true)
 	_fill(["building-skyscraper-a", "building-skyscraper-c", "building-skyscraper-e"], 10, _fs + 45, _fs + 95, -30, _fs + 30, Vector2(5.5, 7.5), 0.0, 0.0, true)
-	_fill(["building-type-a", "building-type-c", "building-type-f"], 5, _fs + 8, _fs + 20, -10, _fs + 10, Vector2(3.4, 4.2), 0.0, 0.04, true)
+	_fill_baked("ruined_house", 5, _fs + 8, _fs + 22, -12, _fs + 12, Vector2(7.0, 9.0), 0.02, 0.04)
 	_camp(_fs + 5.5, _mid - 7.5)
 	_camp(_fs + 6.5, _mid + 8.0)
-	_fill(["sedan", "suv", "van", "ambulance", "police"], 5, _fs + 5, _fs + 34, _mid - 5, _mid + 5, Vector2(1.35, 1.6), 0.1, 0.05, false, true)
+	_fill_baked("car_wreck", 6, _fs + 5, _fs + 34, _mid - 5, _mid + 5, Vector2(4.2, 4.9), 0.08, 0.04, true)
 	_fill(["debris-tire", "debris-door", "debris-plate-a", "debris"], 28, _fs + 3, _fs + 40, -14, _fs + 14, Vector2(1.6, 2.4), 0.0, 0.0, false, true)
 
 
@@ -153,21 +153,74 @@ func _camp(cx: float, cz: float) -> void:
 
 func _wilderness() -> void:
 	var regions := [[-50.0, _fs + 50.0, -46.0, -3.0], [-50.0, _fs + 50.0, _fs + 3.0, _fs + 46.0]]
-	var cars := ["sedan", "suv", "van", "truck", "taxi", "police", "garbage-truck", "delivery"]
 	for r in regions:
 		_fill(["pine-fall", "pine-crooked"], 60, r[0], r[1], r[2], r[3], Vector2(1.4, 2.4), 0.12)
 		_fill(["trunk", "stump-old", "stump-oldtall", "log", "log-large", "log-stack"], 26, r[0], r[1], r[2], r[3], Vector2(2, 3.2))
 		_fill(["rock-largea", "rock-largeb", "rock-largec", "rock-larged", "rock-largee", "rock-largef"], 16, r[0], r[1], r[2], r[3], Vector2(3, 5))
 		_fill(["rock-tallb", "rock-tallc", "rock-talld", "rock-smalla", "rock-smallb", "rock-smallc", "rock-smallflata"], 26, r[0], r[1], r[2], r[3], Vector2(2.4, 4))
 		_fill(["plant-bushdetailed", "plant-bushsmall"], 16, r[0], r[1], r[2], r[3], Vector2(2, 3))
-		_fill(cars, 4, r[0], r[1], r[2], r[3], Vector2(1.35, 1.6), 0.2, 0.08)
+		_fill_baked("car_wreck", 4, r[0], r[1], r[2], r[3], Vector2(4.2, 4.9), 0.18, 0.08)
 		_fill(["debris-tire", "debris-door", "debris-bumper", "debris-plate-a", "debris-plate-b", "debris-drivetrain", "debris"], 24, r[0], r[1], r[2], r[3], Vector2(1.6, 2.6))
 		_fill(["fence-simple", "fence-planks", "fence-bend", "iron-fence", "fence"], 14, r[0], r[1], r[2], r[3], Vector2(2, 3), 0.15)
 	_fill(["pine-fall", "pine-crooked", "trunk", "stump-old"], 40, -80, -8, -50, _fs + 50, Vector2(1.4, 2.4), 0.12)
 	_fill(["rock-largea", "rock-largeb", "rock-tallb", "rock-smalla", "rock-smallb"], 22, -80, _fs + 90, -50, _fs + 50, Vector2(2.4, 4.4))
 
 
+## Запечённая модель (assets/models/baked/<model>.res): size — желаемый размер по большей стороне, м.
+func _add_baked(model: String, x: float, z: float, rot_y: float, size_m: float, tilt: float = 0.0, sink: float = 0.0) -> void:
+	var mesh := Assets.baked_mesh(model)
+	if mesh == null:
+		return
+	var bb := mesh.get_aabb()
+	var k := size_m / maxf(bb.size.x, maxf(bb.size.y, bb.size.z))
+	var basis := Basis.from_euler(Vector3((_rng.randf() - 0.5) * tilt, rot_y, (_rng.randf() - 0.5) * tilt)).scaled(Vector3.ONE * k)
+	if not _baked.has(model):
+		_baked[model] = []
+	_baked[model].append(Transform3D(basis, Vector3(x, -sink, z)))
+
+
+func _fill_baked(model: String, n: int, x0: float, x1: float, z0: float, z1: float, size_range: Vector2, tilt: float = 0.0,
+		sink: float = 0.0, on_road: bool = false) -> void:
+	var placed := 0
+	var tries := 0
+	var qn := int(n * [0.4, 0.7, 1.0, 1.2][clampi(_quality, 0, 3)])
+	while placed < qn and tries < qn * 40:
+		tries += 1
+		var x := _between(x0, x1)
+		var z := _between(z0, z1)
+		if not _free(x, z, on_road):
+			continue
+		var rot := _rng.randf() * TAU
+		if on_road:
+			rot = (PI / 2.0 if _rng.randf() < 0.5 else -PI / 2.0) + _between(-0.5, 0.5)   # машины — вдоль дороги
+		_add_baked(model, x, z, rot, _between(size_range.x, size_range.y), tilt, sink)
+		placed += 1
+
+
+## Сторожевые вышки у обоих ворот (снаружи стены) и у лагеря.
+func _towers() -> void:
+	for x in [-3.4, _fs + 3.4]:
+		for dz in [-4.6, 4.6]:
+			_add_baked("watchtower", x, _mid + dz, _rng.randf() * TAU, 6.5)
+	_add_baked("watchtower", _fs + 10.0, _mid - 13.0, 0.4, 7.0)
+
+
 func _flush() -> void:
+	for model in _baked.keys():
+		var list: Array = _baked[model]
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = Assets.baked_mesh(model)
+		mm.instance_count = list.size()
+		for i in list.size():
+			mm.set_instance_transform(i, list[i])
+		var mmi := MultiMeshInstance3D.new()
+		mmi.multimesh = mm
+		mmi.material_override = Assets.model_material(model, true)
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if _quality >= 1 else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mmi.visibility_range_end = 170.0
+		add_child(mmi)
+	_baked.clear()
 	for key in _buckets.keys():
 		var parts_key: String = str(key).split("|")[0]
 		var near: bool = str(key).ends_with("|1")

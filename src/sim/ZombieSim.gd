@@ -65,12 +65,15 @@ func update(dt: float) -> bool:
 		# поджог: урон со временем
 		if z.burn_left > 0.0:
 			z.burn_left -= dt
-			var r = damage(z.id, z.burn_dps * dt)
+			var r = damage(z.id, z.burn_dps * dt, z.burn_src, "fire")
 			if r != null and r["killed"]:
 				continue
 		# игрок рядом: зомби останавливается и кусает его (солдат у ворот удерживает проход)
 		var victim: SimPlayer = sim.fps.victim_near(z.x, z.z, Cfg.ATTACK_REACH + float(Cfg.PLAYER["radius"]) + z.radius * 0.5)
 		if victim != null:
+			if zc.has("explode"):
+				suicide(z)             # взрывун у игрока лопается сам
+				continue
 			sim.fps.hurt(victim, float(zc["attack"]) * float(Cfg.PLAYER["zombie_mul"]) * dt)
 			z.vx = 0.0
 			z.vz = 0.0
@@ -92,6 +95,9 @@ func update(dt: float) -> bool:
 					z.z += dz / d * step
 					z.travelled += step
 				if gap <= budget:
+					if zc.has("explode"):
+						suicide(z)         # взрывун у турели лопается сам
+						break
 					sim.turrets.damage(blocker.id, float(zc["attack"]) * dt)
 				break
 			if d <= budget:
@@ -105,6 +111,8 @@ func update(dt: float) -> bool:
 				z.z += dz / d * budget
 				z.travelled += budget
 				budget = 0.0
+		if not zombies.has(z.id):
+			continue
 		z.vx = (z.x - x0) / dt
 		z.vz = (z.z - z0) / dt
 		if z.next >= z.route.size():
@@ -112,30 +120,70 @@ func update(dt: float) -> bool:
 	return reached
 
 
-## Наносит урон. При смерти удаляет зомби и начисляет награду РОВНО один раз.
+## Наносит урон вида kind (bullet | melee | fire | blast) от игрока src (0 — автоматика) с учётом брони типа.
+## При смерти удаляет зомби, начисляет награду РОВНО один раз и очки добившему; взрывун при этом лопается.
 ## Возвращает {"killed": bool} или null, если зомби уже нет.
-func damage(id: int, amount: float):
+func damage(id: int, amount: float, src: int = 0, kind: String = "bullet"):
 	var z: SimZombie = zombies.get(id)
 	if z == null:
 		return null
-	z.hp -= amount
+	var eff := amount * Cfg.armor_mul(z.type, kind)
+	sim.score_damage(src, minf(eff, maxf(z.hp, 0.0)))
+	z.hp -= eff
 	if z.hp > 0.0:
 		return {"killed": false}
 	zombies.erase(id)
 	var reward: int = Cfg.zombie_reward(z.type)
 	sim.eco_reward(reward)
-	sim.events["deaths"].append({"id": id, "type": z.type, "x": z.x, "z": z.z, "reward": reward})
+	sim.score_kill(src, z.type)
+	sim.events["deaths"].append({"id": id, "type": z.type, "x": z.x, "z": z.z, "reward": reward, "by": src})
+	if Cfg.ZOMBIES[z.type].has("explode"):
+		_explode(z, src)
 	return {"killed": true}
 
 
+## Взрывун дошёл до турели или игрока: взрывается сам, без награды и очков.
+func suicide(z: SimZombie) -> void:
+	if not zombies.has(z.id):
+		return
+	zombies.erase(z.id)
+	sim.events["deaths"].append({"id": z.id, "type": z.type, "x": z.x, "z": z.z, "reward": 0, "by": 0})
+	_explode(z, 0)
+
+
+## Взрыв взрывуна: урон зомби (засчитывается тому, кто его убил), турелям (на стене — вдвое меньше) и игрокам.
+func _explode(z: SimZombie, src: int) -> void:
+	var e: Dictionary = Cfg.ZOMBIES[z.type]["explode"]
+	var r: float = e["radius"]
+	var edge: float = e["edge"]
+	sim.events["explosions"].append({"x": z.x, "y": 0.9, "z": z.z, "radius": r, "kind": "acid"})
+	var falloff := func(d: float) -> float: return 1.0 - (1.0 - edge) * clampf(d / r, 0.0, 1.0)
+	for o: SimZombie in zombies.values():
+		var d := Vector2(o.x - z.x, o.z - z.z).length() - o.radius
+		if d <= r:
+			damage(o.id, float(e["zombie_dmg"]) * falloff.call(maxf(d, 0.0)), src, "blast")
+	var tdmg: float = float(e["turret_dmg"]) + float(e["turret_dmg_per_wave"]) * float(sim.wave - 1)
+	for t: SimTurret in sim.turrets.turrets.values():
+		var d2 := Vector2(t.world_x() - z.x, t.world_z() - z.z).length()
+		if d2 <= r + 0.3:
+			sim.turrets.damage(t.id, tdmg * falloff.call(d2) * (0.5 if t.elevated else 1.0))
+	for p: SimPlayer in sim.fps.players.values():
+		if not (p.active and p.alive):
+			continue
+		var d3 := Vector2(p.x - z.x, p.z - z.z).length()
+		if d3 <= r:
+			sim.fps.hurt(p, float(e["player_dmg"]) * falloff.call(d3))
+
+
 ## Поджигает зомби: горит time секунд, dps урона в секунду (сильнейший поджог не перебивается слабым).
-func ignite(id: int, dps: float, time: float) -> void:
+## Урон от горения засчитывается тому, кто поджёг последним (src).
+func ignite(id: int, dps: float, time: float, src: int = 0) -> void:
 	var z: SimZombie = zombies.get(id)
 	if z == null or dps <= 0.0:
 		return
 	z.burn_dps = maxf(z.burn_dps if z.burn_left > 0.0 else 0.0, dps)
 	z.burn_left = maxf(z.burn_left, time)
-
+	z.burn_src = src
 
 func snapshot() -> Array:
 	var out: Array = []

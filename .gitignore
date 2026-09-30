@@ -4,3 +4,4 @@ save*.json
 /shots/
 
 /build/
+/assets/source/refs/

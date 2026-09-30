@@ -1,8 +1,7 @@
 class_name ZombieRig
 extends Node3D
-## Оригинальный зомби-«шаркун»: сутулый, в рваной белой рубашке и тёмных брюках, серо-землистая кожа, раны,
-## неровная походка (одна нога подволакивается, голова свесилась). Стилизованный low-poly в общей палитре.
-## Три типа различаются размером и окраской (толстый — крупный и тёмный, быстрый — мелкий и желтовато-бледный).
+## Зомби: модель своего типа со скелетом и анимациями (см. _build_rigged). Если моделей нет — запасной
+## «шаркун» из примитивов (_build).
 
 var type := "normal"
 var top_y := 1.95            # высота полоски HP над головой
@@ -20,7 +19,7 @@ var _elbow_r: Node3D
 var _flash := 0.0
 var _burning := false
 var _body: Node3D
-var _skel_root: Node3D          # сцена zombie_rigged.tscn (скелет + AnimationPlayer)
+var _skel_root: Node3D          # сцена модели (скелет + AnimationPlayer)
 var _anim: AnimationPlayer
 var _mode := ""
 var _last_phase := 0.0
@@ -286,47 +285,46 @@ func _apply_emission() -> void:
 		e = 0.9
 	elif _burning:
 		e = 0.5 + 0.2 * sin(Time.get_ticks_msec() / 60.0)
+	elif type == "boomer":
+		e = 0.12 + 0.1 * sin(Time.get_ticks_msec() / 180.0)
 	for m in _mats:
 		m.emission_energy_multiplier = e
 
 
-## Обычный и толстый зомби — zombie_rigged.tscn (модель Tripo), быстрый — одна из пяти «девушек» (girl_rigged.scn + текстура
-## girl_A/B/green/blue/red). Скелет из 16 костей, анимации walk/attack/idle (tools/rig_models.gd, tools/bake_models.gd).
-## Исходные модели смотрят в -Z, поэтому корень поворачиваем на 180°; ступни на нулевом уровне зашиты в сцену.
+## Модели зомби (tools/bake_all.gd → assets/models/baked): ходок z_walker, толстый z_fat, броненосец z_armored,
+## взрывун z_boomer, громила z_brute; бегунья — одна сетка girl и пять текстур. Скелет из 16 костей, анимации
+## walk/attack/idle. Модели смотрят в -Z, поэтому корень повёрнут на 180°; размер — по росту типа из Cfg.
+const MODELS := {"normal": "z_walker", "fat": "z_fat", "fast": "girl", "armored": "z_armored", "boomer": "z_boomer", "brute": "z_brute"}
+const GIRL_TEX := ["girl_A", "girl_B", "girl_green", "girl_blue", "girl_red"]
+var stride := 0.9                # метров на цикл шага (фаза шага считается по пройденному пути)
+
+
 func _build_rigged() -> bool:
 	var zc: Dictionary = Cfg.ZOMBIES[type]
-	var s: float = zc["scale"]
-	var girl := type == "fast" and ResourceLoader.exists("res://assets/models/girl_rigged.scn")
-	var path := "res://assets/models/girl_rigged.scn" if girl else "res://assets/models/zombie_rigged.tscn"
+	var model: String = MODELS.get(type, "z_walker")
+	var path := "res://assets/models/baked/%s.scn" % model
 	if not ResourceLoader.exists(path):
 		return false
 	_skel_root = (load(path) as PackedScene).instantiate()
-	var rig_h: float = float(_skel_root.get_meta("rig_height", 0.946))
-	var k: float = (1.72 if girl else float(zc["height"])) / rig_h * 0.98
+	var rig_h: float = float(_skel_root.get_meta("rig_height", 1.0))
+	var h: float = zc["height"]
 	_skel_root.rotation.y = PI
-	_skel_root.scale = Vector3.ONE * k
+	_skel_root.scale = Vector3.ONE * (h / rig_h)
 	add_child(_skel_root)
 	_anim = _skel_root.get_node("AnimationPlayer")
 	var body := _skel_root.find_child("Body", true, false) as MeshInstance3D
-	var mat: StandardMaterial3D
-	if girl:
-		mat = Assets.model_material("girl_" + ["A", "B", "green", "blue", "red"][randi() % 5])
-	else:
-		mat = Assets.tripo_material()
+	var tex: String = GIRL_TEX[randi() % GIRL_TEX.size()] if model == "girl" else model
+	var mat := Assets.model_material(tex)
+	# небольшой разброс оттенка, чтобы толпа не выглядела клонами
+	mat.albedo_color = mat.albedo_color * Color(randf_range(0.88, 1.0), randf_range(0.88, 1.0), randf_range(0.86, 1.0))
+	if type == "boomer":
+		mat.emission = Color(0.55, 1.0, 0.2)   # пульсирующее ядовитое свечение
 	body.material_override = mat
 	body.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	if girl:
-		scale = Vector3.ONE
-	elif type == "fat":
-		scale = Vector3(s * 1.05, s, s * 1.05)
-		mat.albedo_color = mat.albedo_color * Color(0.72, 0.85, 0.6)
-	elif type == "fast":
-		scale = Vector3.ONE * s
-		mat.albedo_color = mat.albedo_color * Color(1.0, 0.9, 0.55)
-	else:
-		scale = Vector3.ONE
+	scale = Vector3.ONE
 	_mats = [mat]
-	top_y = (1.72 if girl else float(zc["height"]) * (s if type != "normal" else 1.0)) + 0.15
+	top_y = h + 0.18
+	stride = 0.9 * h / 1.8
 	_set_mode("walk")
 	return true
 

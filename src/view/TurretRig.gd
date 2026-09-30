@@ -134,11 +134,6 @@ func _build() -> void:
 	base_z = pivot.position.z
 
 
-## Базовая турель — turret_rigged.tscn (модель Tripo + скелет из tools/rig_models.gd).
-## Кости: root (ножки, неподвижны), turret (плита и купол — yaw), gun (орудие — pitch и отдача).
-## Ствол в модели идёт вдоль +X → корень сцены повёрнут на -90° вокруг Y, ствол смотрит в +Z.
-const TRIPO_HALF := Vector3(0.49, 0.46, 0.40)   # половинные размеры исходной модели
-
 var _skel: Skeleton3D
 var _gun_axis := Vector3(0, 0, 1)         # ось наклона орудия (в системе модели)
 var _recoil_dir := Vector3(-1, 0, 0)        # направление отката (в системе модели)
@@ -150,8 +145,9 @@ var _bone_gun := -1
 var _gun_rest := Vector3.ZERO
 
 
-## Готовые модели оружия (tools/bake_models.gd): сцена со скелетом root / turret (yaw) / gun (pitch, отдача).
+## Модели турелей (tools/bake_all.gd → assets/models/baked/*.scn): скелет root / turret (yaw) / gun (pitch, отдача).
 const RIGGED := {
+	"gun": {"scene": "cannon", "tex": "turret_cannon", "scale": 0.6, "recoil": 0.1, "cam_back": 1.25, "cam_up": 1.0},
 	"machinegun": {"scene": "machinegun", "tex": "turret_machinegun", "scale": 0.62, "recoil": 0.07, "cam_back": 1.0, "cam_up": 0.6},
 	"rocket": {"scene": "artillery", "tex": "turret_artillery", "scale": 0.62, "recoil": 0.12, "cam_back": 1.35, "cam_up": 0.72},
 	"flame": {"scene": "flamethrower", "tex": "turret_flamethrower", "scale": 0.6, "recoil": 0.0, "cam_back": 1.4, "cam_up": 0.78},
@@ -159,16 +155,16 @@ const RIGGED := {
 
 
 func _rigged_ok() -> bool:
-	return RIGGED.has(weapon) and ResourceLoader.exists("res://assets/models/%s_rigged.scn" % RIGGED[weapon]["scene"])
+	return RIGGED.has(weapon) and ResourceLoader.exists("res://assets/models/baked/%s.scn" % RIGGED[weapon]["scene"])
 
 
 func _own_base() -> bool:
-	return weapon == "gun" or _rigged_ok()
+	return _rigged_ok()
 
 
 func _build_rigged() -> void:
 	var cfg: Dictionary = RIGGED[weapon]
-	var sc := (load("res://assets/models/%s_rigged.scn" % cfg["scene"]) as PackedScene).instantiate() as Node3D
+	var sc := (load("res://assets/models/baked/%s.scn" % cfg["scene"]) as PackedScene).instantiate() as Node3D
 	var s: float = float(cfg["scale"]) * (1.0 + level * 0.012)
 	sc.rotation.y = -float(sc.get_meta("fwd_angle"))       # ствол модели → +Z
 	sc.scale = Vector3.ONE * s
@@ -204,39 +200,13 @@ func _build_rigged() -> void:
 	cam_up = float(cfg["cam_up"])
 
 
+## Запасной вариант без модели.
 func _build_gun(_m: Array) -> void:
-	var s := 1.05 + level * 0.012
-	if ResourceLoader.exists("res://assets/models/turret_rigged.tscn"):
-		var mi := (load("res://assets/models/turret_rigged.tscn") as PackedScene).instantiate() as Node3D
-		mi.rotation.y = -PI / 2.0
-		mi.scale = Vector3.ONE * s
-		head.position.y = 0.0
-		pivot.position.y = TRIPO_HALF.y * s       # центр модели: ножки стоят на нулевом уровне
-		pivot.add_child(mi)
-		var body := mi.find_child("Body", true, false) as MeshInstance3D
-		body.material_override = Assets.tripo_material()
-		body.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-		_skel = mi.get_node("Skeleton3D")
-		_bone_turret = _skel.find_bone("turret")
-		_bone_gun = _skel.find_bone("gun")
-		_gun_rest = _skel.get_bone_rest(_bone_gun).origin
-		# дуло привязано к кости орудия и следует за наклоном и откатом
-		var att := BoneAttachment3D.new()
-		att.bone_name = "gun"
-		_skel.add_child(att)
-		var tip := Marker3D.new()
-		tip.position = Vector3(0.44, 0.0, -0.03)
-		att.add_child(tip)
-		muzzle.free()
-		muzzle = tip
-		pitch_scale = 1.0
-		cam_back = 1.15
-		cam_up = 0.85
-	else:   # запасной вариант без модели
-		head.position.y = 0.93
-		_box(Vector3(0.5, 0.3, 0.6), _m[0], Vector3(0, 0.15, 0), pivot)
-		_cyl(0.06, 0.07, 0.8, _m[1], Vector3(0, 0.2, 0.55), true, pivot)
-		muzzle.position = Vector3(0, 0.2, 0.95)
+	head.position.y = 0.93
+	_box(Vector3(0.5, 0.3, 0.6), _m[0], Vector3(0, 0.15, 0), pivot)
+	_cyl(0.06, 0.07, 0.8, _m[1], Vector3(0, 0.2, 0.55), true, pivot)
+	muzzle.position = Vector3(0, 0.2, 0.95)
+
 
 func _build_mg(m: Array) -> void:
 	var steel: StandardMaterial3D = m[0]
