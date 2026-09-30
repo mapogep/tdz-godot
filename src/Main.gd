@@ -1,9 +1,9 @@
-extends Node
-## Корневой узел: меню ↔ игра. Host держит авторитетную симуляцию (GameSim) и рассылает снапшоты;
-## клиент лишь показывает снапшоты и шлёт команды. Локальный игрок-Host применяет свои снапшоты напрямую.
+﻿extends Node
+## РљРѕСЂРЅРµРІРѕР№ СѓР·РµР»: РјРµРЅСЋ в†” РёРіСЂР°. Host РґРµСЂР¶РёС‚ Р°РІС‚РѕСЂРёС‚РµС‚РЅСѓСЋ СЃРёРјСѓР»СЏС†РёСЋ (GameSim) Рё СЂР°СЃСЃС‹Р»Р°РµС‚ СЃРЅР°РїС€РѕС‚С‹;
+## РєР»РёРµРЅС‚ Р»РёС€СЊ РїРѕРєР°Р·С‹РІР°РµС‚ СЃРЅР°РїС€РѕС‚С‹ Рё С€Р»С‘С‚ РєРѕРјР°РЅРґС‹. Р›РѕРєР°Р»СЊРЅС‹Р№ РёРіСЂРѕРє-Host РїСЂРёРјРµРЅСЏРµС‚ СЃРІРѕРё СЃРЅР°РїС€РѕС‚С‹ РЅР°РїСЂСЏРјСѓСЋ.
 ##
-## Параметры командной строки для проверок (после `--`):
-##   --scenario=имя  --shot=путь.png@кадр[,путь2.png@кадр2]  --quality=0..3  --menu-shot=путь.png
+## РџР°СЂР°РјРµС‚СЂС‹ РєРѕРјР°РЅРґРЅРѕР№ СЃС‚СЂРѕРєРё РґР»СЏ РїСЂРѕРІРµСЂРѕРє (РїРѕСЃР»Рµ `--`):
+##   --scenario=РёРјСЏ  --shot=РїСѓС‚СЊ.png@РєР°РґСЂ[,РїСѓС‚СЊ2.png@РєР°РґСЂ2]  --quality=0..3  --menu-shot=РїСѓС‚СЊ.png
 
 const SAVE_PATH := "user://save.json"
 
@@ -43,6 +43,8 @@ func _ready() -> void:
 	if _args.has("scenario"):
 		_start_game("single", "", 0, false)
 		_setup_scenario(str(_args["scenario"]))
+	elif _args.has("auto"):
+		_start_game(str(_args["auto"]), "127.0.0.1", 7791, false)
 	elif _args.has("menu-shot"):
 		_shots = [{"path": str(_args["menu-shot"]), "frame": 30}]
 
@@ -61,7 +63,7 @@ func _parse_args() -> Dictionary:
 	return out
 
 
-# ───────────────────────── меню и запуск ─────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ РјРµРЅСЋ Рё Р·Р°РїСѓСЃРє в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 func _open_menu() -> void:
 	if menu != null:
@@ -111,7 +113,7 @@ func _start_game(mode: String, address: String, port: int, use_save: bool) -> vo
 			var ips := NetHub.local_addresses()
 			hud.toast("%s %s:%d" % [I18n.t("hosting"), ips[0] if ips.size() > 0 else "localhost", port])
 	else:
-		# клиент: ждём подключения, мир строим сразу (наполнится снапшотами)
+		# РєР»РёРµРЅС‚: Р¶РґС‘Рј РїРѕРґРєР»СЋС‡РµРЅРёСЏ, РјРёСЂ СЃС‚СЂРѕРёРј СЃСЂР°Р·Сѓ (РЅР°РїРѕР»РЅРёС‚СЃСЏ СЃРЅР°РїС€РѕС‚Р°РјРё)
 		st.my_id = 0
 		if not NetHub.connected_to_host.is_connected(_on_connected):
 			NetHub.connected_to_host.connect(_on_connected)
@@ -198,7 +200,7 @@ func _end_game(reason: String = "") -> void:
 		menu.set_status(I18n.t(reason))
 
 
-# ───────────────────────── команды и снапшоты ─────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ РєРѕРјР°РЅРґС‹ Рё СЃРЅР°РїС€РѕС‚С‹ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 func _send_cmd(msg: Dictionary) -> void:
 	NetHub.send_command(msg)
@@ -252,7 +254,7 @@ func _on_snapshot(s: Dictionary) -> void:
 	_prev_snap = s
 
 
-## Звуки и баннеры по разнице между двумя снапшотами.
+## Р—РІСѓРєРё Рё Р±Р°РЅРЅРµСЂС‹ РїРѕ СЂР°Р·РЅРёС†Рµ РјРµР¶РґСѓ РґРІСѓРјСЏ СЃРЅР°РїС€РѕС‚Р°РјРё.
 func _react_to_changes(old: Dictionary, cur: Dictionary) -> void:
 	if old.is_empty():
 		return
@@ -279,7 +281,7 @@ func _react_to_changes(old: Dictionary, cur: Dictionary) -> void:
 			break
 	if not cur["destroyed"].is_empty():
 		postfx.flash(0.35)
-	# редкие стоны зомби на поле
+	# СЂРµРґРєРёРµ СЃС‚РѕРЅС‹ Р·РѕРјР±Рё РЅР° РїРѕР»Рµ
 	if cur["zombies"].size() > 0 and randf() < 0.012:
 		var z: Dictionary = cur["zombies"][randi() % cur["zombies"].size()]
 		Sfx.play("groan", Vector3(z["x"], 1.5, z["z"]), -4.0)
@@ -307,7 +309,7 @@ func _on_hud_action(name: String, arg: Variant) -> void:
 		"toMenu": _end_game()
 
 
-# ───────────────────────── автосохранение ─────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ Р°РІС‚РѕСЃРѕС…СЂР°РЅРµРЅРёРµ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 func _autosave() -> void:
 	if sim == null or is_client:
@@ -317,12 +319,12 @@ func _autosave() -> void:
 		f.store_string(JSON.stringify(sim.to_save()))
 
 
-# ───────────────────────── главный цикл ─────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ РіР»Р°РІРЅС‹Р№ С†РёРєР» в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 func _process(delta: float) -> void:
 	_frame += 1
 	if in_game and not is_client and sim != null:
-		# фиксированный шаг симуляции; снапшот после каждого шага (события не теряются)
+		# С„РёРєСЃРёСЂРѕРІР°РЅРЅС‹Р№ С€Р°Рі СЃРёРјСѓР»СЏС†РёРё; СЃРЅР°РїС€РѕС‚ РїРѕСЃР»Рµ РєР°Р¶РґРѕРіРѕ С€Р°РіР° (СЃРѕР±С‹С‚РёСЏ РЅРµ С‚РµСЂСЏСЋС‚СЃСЏ)
 		_acc += minf(delta, 0.25)
 		var dt := 1.0 / Cfg.TICK_RATE
 		var steps := 0
@@ -344,10 +346,10 @@ func _process(delta: float) -> void:
 	_take_shots()
 
 
-# ───────────────────────── сценарии для проверок ─────────────────────────
+# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ СЃС†РµРЅР°СЂРёРё РґР»СЏ РїСЂРѕРІРµСЂРѕРє в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 func _setup_scenario(name: String) -> void:
-	# шаги: [кадр, Callable]; команды — только для Host (single)
+	# С€Р°РіРё: [РєР°РґСЂ, Callable]; РєРѕРјР°РЅРґС‹ вЂ” С‚РѕР»СЊРєРѕ РґР»СЏ Host (single)
 	var build := func() -> void:
 		for y in range(1, 19):
 			_on_command(1, {"t": "buildWall", "x": 8, "y": y})
@@ -388,3 +390,4 @@ func _take_shots() -> void:
 			print("shot saved: ", s["path"], " ", img.get_size())
 	if not _shots.is_empty() and _frame > int(_shots[-1]["frame"]) + 2:
 		get_tree().quit()
+
