@@ -66,8 +66,23 @@ func has_wall(x: int, y: int) -> bool:
 	return wall_cells.has(y * nav.size + x)
 
 
+## Свободный FPS игрока: {active, alive, x, z, yaw, pitch, hp, max_hp, weapon, melee, ammo, mags, reload}.
+func my_fps() -> Dictionary:
+	return me().get("fps", {})
+
+
+func is_dead() -> bool:
+	var f := my_fps()
+	return not f.is_empty() and not bool(f["alive"])
+
+
+func in_free_fps() -> bool:
+	var f := my_fps()
+	return not f.is_empty() and bool(f["active"]) and bool(f["alive"])
+
+
 func can_build() -> bool:
-	return is_host() and snap.get("state", "") == "Preparation"
+	return is_host() and snap.get("state", "") == "Preparation" and not is_dead() and not in_free_fps()
 
 
 ## Предсказание для подсветки: можно ли поставить стену (окончательно решает Host).

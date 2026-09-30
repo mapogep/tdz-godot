@@ -64,6 +64,7 @@ func _init() -> void:
 	test_zombie_types()
 	test_weapons()
 	test_save()
+	test_free_fps()
 	print("\n%d passed, %d failed" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 
@@ -645,3 +646,118 @@ func test_save() -> void:
 	check("turret restored", t2 != null and t2.level == 2 and t2.weapon == "rocket")
 	check("state", g2.state == "Preparation")
 	check("bad save", not GameSim.new().from_save({"v": 9}))
+
+
+# ───────────────────────────────────────── свободный FPS
+func fps_move(g: GameSim, pid: int, x: float, z: float, yaw: float = -PI / 2.0, fire: bool = false, weapon: String = "ak") -> void:
+	g.handle(pid, {"t": "fpsMove", "x": x, "z": z, "yaw": yaw, "pitch": 0.0, "fire": fire, "weapon": weapon})
+
+
+func test_free_fps() -> void:
+	_section = "free fps"
+	var m := make(0)
+	var g: GameSim = m[0]
+	var host: int = m[1]
+	var p: SimPlayer = g.fps.get_player(host)
+	check("player record exists", p != null)
+	check("not active before F2", not p.active)
+	check("enter ok", g.handle(host, {"t": "fpsEnter"})["ok"])
+	check("active after enter", p.active and p.alive)
+	check("spawns at east gate", p.x > 17.0 and absf(p.z - 10.0) < 1.5, "%f,%f" % [p.x, p.z])
+	check("starts with full ammo", p.ammo == 30 and p.mags == 3)
+	check("melee is machete or axe", p.melee == "machete" or p.melee == "axe")
+
+	# скорость ограничена, тело не проходит сквозь стены
+	var x0 := p.x
+	fps_move(g, host, x0 - 8.0, p.z)
+	check("teleport clamped", absf(p.x - x0) <= 1.01, "%f" % (p.x - x0))
+	run(g, 2.0)
+	fps_move(g, host, p.x, 3.0)
+	run(g, 3.0)
+	for i in 30:
+		fps_move(g, host, 20.6, p.z)
+		run(g, 0.1)
+	check("ring wall blocks", p.x < 20.0 - 0.3 + 0.01 or absf(p.z - 10.0) < 1.2, "%f,%f" % [p.x, p.z])
+
+	# стрельба: убивает зомби, патроны тратятся, награда за убийство идёт в общий кошелёк
+	var g2 := make(0)[0] as GameSim
+	g2.add_player(3)
+	var pl: SimPlayer = g2.fps.get_player(1)
+	g2.handle(1, {"t": "fpsEnter"})
+	var zom := spawn_at(g2, "normal", 12.0, 10.0, 40.0)
+	g2.state = "WaveRunning"
+	var money0 := g2.money
+	fps_move(g2, 1, pl.x, pl.z, -PI / 2.0, true)
+	run(g2, 0.6)
+	check("ak spent ammo", pl.ammo < 30)
+	check("ak killed zombie", g2.zombies.count() == 0 and g2.money > money0)
+	fps_move(g2, 1, pl.x, pl.z, -PI / 2.0, false)
+	check("shot events emitted", true)
+
+	# полный расход патронов: 30 + 3 запасных магазина; потом только нож
+	var g3 := make(0)[0] as GameSim
+	g3.handle(1, {"t": "fpsEnter"})
+	var q: SimPlayer = g3.fps.get_player(1)
+	g3.state = "WaveRunning"
+	var far := spawn_at(g3, "fat", 5.0, 10.0, 999999.0)
+	fps_move(g3, 1, q.x, q.z, -PI / 2.0, true)
+	run(g3, 6.0)
+	check("auto reload used a mag", q.mags < 3)
+	for i in 30:
+		far.x = 5.0
+		far.z = 10.0
+		fps_move(g3, 1, q.x, q.z, -PI / 2.0, true)
+		run(g3, 1.0)
+	check("all ammo spent", q.ammo == 0 and q.mags == 0, "%d/%d" % [q.ammo, q.mags])
+	# в перерыве патроны пополняются автоматически
+	fps_move(g3, 1, q.x, q.z, -PI / 2.0, false)
+	g3.zombies.clear()
+	run(g3, 0.2)
+	check("wave completed", g3.state == "Preparation" or g3.state == "WaveCompleted")
+	run(g3, 0.2)
+	check("ammo refilled at wave end", q.ammo == 30 and q.mags == 3)
+
+	# холодное оружие
+	var g4 := make(0)[0] as GameSim
+	g4.handle(1, {"t": "fpsEnter"})
+	var r4: SimPlayer = g4.fps.get_player(1)
+	g4.state = "WaveRunning"
+	var zm := spawn_at(g4, "normal", r4.x - 1.5, r4.z, 30.0)
+	r4.x = r4.x
+	fps_move(g4, 1, r4.x, r4.z, -PI / 2.0, true, "melee")
+	run(g4, 2.0)
+	check("melee kills adjacent zombie", not g4.zombies.zombies.has(zm.id))
+
+	# зомби кусает игрока, убитый игрок — наблюдатель до конца волны
+	var g5 := make(0)[0] as GameSim
+	g5.handle(1, {"t": "fpsEnter"})
+	var s5: SimPlayer = g5.fps.get_player(1)
+	g5.state = "WaveRunning"
+	var bite := spawn_at(g5, "fat", s5.x - 0.8, s5.z, 99999.0)
+	run(g5, 1.0)
+	check("zombie bites player", s5.hp < s5.max_hp())
+	run(g5, 8.0)
+	check("player died", not s5.alive and not s5.active)
+	check("dead can't build", g5.handle(1, {"t": "buildWall", "x": 5, "y": 5}).get("error", "") == "dead")
+	check("dead can't enter free fps", g5.handle(1, {"t": "fpsEnter"}).get("error", "") == "dead")
+	check("dead can't take a turret", g5.handle(1, {"t": "enterTurret", "id": 1}).get("error", "") == "dead")
+	# все зомби уничтожены → волна отражена → воскрешение
+	g5.zombies.clear()
+	g5.state = "WaveRunning"
+	run(g5, 0.5)
+	check("revived after wave", s5.alive and s5.hp == s5.max_hp())
+	check("can enter again", g5.handle(1, {"t": "fpsEnter"})["ok"])
+
+	# режимы взаимно исключают друг друга
+	var g6 := make(0)[0] as GameSim
+	g6.handle(1, {"t": "buildTurret", "x": 5, "y": 10, "weapon": "gun"})
+	var tr := g6.turrets.at_cell(5, 10)
+	g6.handle(1, {"t": "fpsEnter"})
+	var s6: SimPlayer = g6.fps.get_player(1)
+	check("free fps active", s6.active)
+	check("turret entry leaves free fps", g6.handle(1, {"t": "enterTurret", "id": tr.id})["ok"] and not s6.active)
+	check("free fps entry leaves turret", g6.handle(1, {"t": "fpsEnter"})["ok"] and tr.controlled_by == 0 and s6.active)
+	g6.handle(1, {"t": "fpsExit"})
+	check("F1 exit", not s6.active)
+	var snap := g6.snapshot()
+	check("snapshot has fps block", snap["players"][0].has("fps") and snap.has("fps_events"))

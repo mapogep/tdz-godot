@@ -7,10 +7,14 @@ extends RefCounted
 
 var start_money: int = Cfg.START_MONEY
 
+# убитый игрок только наблюдает: эти команды ему недоступны
+const DEAD_BLOCKED := ["startWave", "buildWall", "removeWall", "buildTurret", "moveTurret", "sellTurret", "upgradeTurret", "enterTurret"]
+
 var nav: NavSim
 var zombies: ZombieSim
 var turrets: TurretSim
 var build: BuildSim
+var fps: PlayerSim
 
 # экономика
 var money: int = 0
@@ -54,11 +58,12 @@ func _init(p_start_money: int = Cfg.START_MONEY) -> void:
 	zombies = ZombieSim.new(self)
 	turrets = TurretSim.new(self)
 	build = BuildSim.new(self)
+	fps = PlayerSim.new(self)
 	eco_reset()
 
 
 func _reset_events() -> void:
-	events = {"shots": [], "deaths": [], "destroyed": [], "explosions": []}
+	events = {"shots": [], "deaths": [], "destroyed": [], "explosions": [], "fps": []}
 
 
 # ───────────── экономика ─────────────
@@ -123,6 +128,7 @@ func eco_take_turret(weapon: String) -> bool:
 func add_player(id: int) -> String:
 	var name := "Player %d" % id
 	players[id] = {"name": name}
+	fps.add(id)
 	if host_id == 0:
 		host_id = id
 	return name
@@ -130,6 +136,7 @@ func add_player(id: int) -> String:
 
 func remove_player(id: int) -> void:
 	players.erase(id)
+	fps.remove(id)
 	turrets.release_player(id)
 	if host_id == id:
 		host_id = 0
@@ -182,6 +189,7 @@ func _enter_preparation() -> void:
 	state = "Preparation"
 	prep_left = Cfg.PREP_TIME
 	turrets.repair_all()      # между волнами турели чинятся бесплатно
+	fps.revive_and_refill()   # убитые возрождаются, патроны и здоровье восстановлены
 	if on_preparation.is_valid():
 		on_preparation.call()
 
@@ -206,14 +214,17 @@ func tick(dt: float) -> void:
 		"Preparation":
 			prep_left -= dt
 			turrets.update(dt)   # занятые игроками турели вращаются и между волнами
+			fps.update(dt)
 			if prep_left <= 0.0:
 				start_wave()
 		"WaveRunning":
 			_wave_update(dt)
 			turrets.update(dt)
+			fps.update(dt)
 			if zombies.update(dt):
 				state = "GameOver"   # зомби остаются замороженными на месте
 				turrets.release_all()
+				fps.deactivate_all()
 				if on_game_over.is_valid():
 					on_game_over.call()
 			elif _wave_finished():
@@ -230,7 +241,20 @@ func handle(pid: int, msg: Dictionary) -> Dictionary:
 	var host := is_host(pid)
 	var prep := is_preparation()
 	var t: String = str(msg.get("t", ""))
+	var me: SimPlayer = fps.get_player(pid)
+	if me != null and not me.alive and t in DEAD_BLOCKED:
+		return fail("dead")
 	match t:
+		"fpsEnter":
+			if state == "GameOver": return fail("wrongPhase")
+			return fps.enter(pid)
+		"fpsExit":
+			fps.exit(pid)
+			return ok()
+		"fpsMove":
+			return fps.move(pid, msg)
+		"fpsReload":
+			return fps.reload(pid)
 		"startWave":
 			if not host: return fail("notHost")
 			return ok() if start_wave() else fail("wrongPhase")
@@ -244,6 +268,7 @@ func handle(pid: int, msg: Dictionary) -> Dictionary:
 		"enterTurret":
 			if not msg.has("id"): return fail("invalid")
 			if state == "GameOver": return fail("wrongPhase")
+			fps.exit(pid)
 			return turrets.enter(int(msg["id"]), pid)
 		"exitTurret":
 			turrets.release_player(pid)
@@ -289,14 +314,14 @@ func snapshot() -> Dictionary:
 	for id in players.keys():
 		var tur := turrets.turret_of(int(id))
 		pl.append({"id": id, "name": players[id]["name"], "is_host": int(id) == host_id,
-			"turret_id": tur.id if tur != null else 0})
+			"turret_id": tur.id if tur != null else 0, "fps": fps.snapshot_of(int(id))})
 	var s := {
 		"state": state, "wave": wave, "prep_left": int(ceil(maxf(0.0, prep_left))),
 		"money": money, "walls_left": wall_stock, "turrets_left": turret_stock,
 		"zombies": zombies.snapshot(), "turrets": turrets.snapshot(), "players": pl,
 		"rockets": turrets.rockets_snapshot(),
 		"shots": events["shots"], "deaths": events["deaths"], "destroyed": events["destroyed"],
-		"explosions": events["explosions"],
+		"explosions": events["explosions"], "fps_events": events["fps"],
 		"killed": zombies_killed, "earned": money_earned,
 	}
 	_reset_events()

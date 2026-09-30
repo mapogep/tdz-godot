@@ -91,6 +91,8 @@ func play(sound: String, pos: Variant = null, vol_db: float = 0.0, pitch: float 
 	match sound:
 		"shot": min_gap = 0.045
 		"mg": min_gap = 0.055
+		"ak": min_gap = 0.05
+		"step": min_gap = 0.12
 		"flame": min_gap = 0.09
 		"groan": min_gap = 0.4
 		"hurt": min_gap = 0.08
@@ -215,6 +217,44 @@ func _synthesize() -> void:
 	_add("enter", 1, func(i: int) -> PackedFloat32Array:
 		var b := _buf(0.25)
 		_tone(b, 0.0, 0.16, 300.0, 600.0, 0.4, 0)
+		return b)
+	# личное оружие «Свободного FPS»
+	_add("ak", 3, func(i: int) -> PackedFloat32Array:
+		var b := _buf(0.3)
+		_noise(b, 0.0, 0.05, 0.9, 3600.0, 700.0)
+		_noise(b, 0.0, 0.22, 0.5, 900.0 + i * 120.0, 120.0)
+		_tone(b, 0.0, 0.12, 200.0, 48.0, 0.7, 0)
+		return b)
+	_add("swing", 2, func(i: int) -> PackedFloat32Array:
+		var b := _buf(0.3)
+		_noise(b, 0.0, 0.26, 0.4, 2600.0 + i * 500.0, 500.0)
+		return b)
+	_add("chop", 3, func(i: int) -> PackedFloat32Array:
+		var b := _buf(0.2)
+		_tone(b, 0.0, 0.09, 140.0 - i * 10.0, 60.0, 0.7, 1)
+		_noise(b, 0.0, 0.1, 0.7, 1800.0, 250.0)
+		return b)
+	_add("reload", 1, func(i: int) -> PackedFloat32Array:
+		var b := _buf(2.3)
+		_tone(b, 0.15, 0.05, 1500.0, 600.0, 0.5, 1)
+		_noise(b, 0.15, 0.06, 0.5, 4000.0, 1200.0)
+		_noise(b, 1.25, 0.05, 0.6, 3000.0, 800.0)
+		_tone(b, 1.25, 0.06, 900.0, 400.0, 0.5, 1)
+		_tone(b, 1.85, 0.06, 500.0, 250.0, 0.6, 1)
+		_noise(b, 1.85, 0.08, 0.6, 2500.0, 500.0)
+		return b)
+	_add("empty", 1, func(i: int) -> PackedFloat32Array:
+		var b := _buf(0.08)
+		_tone(b, 0.0, 0.04, 1800.0, 900.0, 0.35, 1)
+		return b)
+	_add("step", 3, func(i: int) -> PackedFloat32Array:
+		var b := _buf(0.14)
+		_noise(b, 0.0, 0.1, 0.5, 500.0 + i * 60.0, 90.0)
+		return b)
+	_add("pain", 2, func(i: int) -> PackedFloat32Array:
+		var b := _buf(0.3)
+		_tone(b, 0.0, 0.22, 240.0 + i * 30.0, 120.0, 0.5, 2)
+		_noise(b, 0.0, 0.12, 0.3, 800.0, 200.0)
 		return b)
 	_add("boom", 3, func(i: int) -> PackedFloat32Array:
 		var b := _buf(1.1)

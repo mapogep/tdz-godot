@@ -153,3 +153,21 @@ static func upgrade_cost(level: int, type: String = "gun") -> int:
 ## Цена продажи при вложенных invested (база + все улучшения).
 static func sell_value(invested: int) -> int:
 	return int(floor(invested * float(TURRET["sell_mul"])))
+
+
+# ───────────── «Свободный FPS»: личный солдат игрока ─────────────
+
+const PLAYER := {
+	"hp": 100.0, "speed": 4.6, "sprint_mul": 1.55, "radius": 0.32, "eye": 1.65,
+	"spawn_x": 18.6, "spawn_z": 10.0,      # у восточных ворот, внутри стены
+	"zombie_mul": 0.8,                     # урон зомби по игроку = attack * mul в секунду
+	"bounds_min": -6.0, "bounds_max": 26.0,
+}
+
+# личное оружие: АК-47 (mags — запасные магазины) и холодное (выдаётся случайно)
+const PWEAPONS := {
+	"ak": {"damage": 24.0, "rate": 9.0, "mag": 30, "mags": 3, "reload": 2.3, "spread": 0.016, "range": 90.0},
+	"machete": {"damage": 34.0, "range": 2.1, "cooldown": 0.55, "arc": 1.05},
+	"axe": {"damage": 58.0, "range": 2.0, "cooldown": 0.95, "arc": 1.05},
+}
+const MELEE_TYPES := ["machete", "axe"]

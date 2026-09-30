@@ -53,6 +53,19 @@ var _ammo_lbl: Label
 var _fps_hint: Label
 var _fps_wave: Label
 var _reload: ProgressBar
+var _free_root: Control
+var _free_cross: Crosshair
+var _free_hp: ProgressBar
+var _free_hp_lbl: Label
+var _free_ammo: Label
+var _free_sub: Label
+var _free_top: Label
+var _free_reload: ProgressBar
+var _free_hint: Label
+var _vignette: TextureRect
+var _vig_t := 0.0
+var _dead_panel: PanelContainer
+var _dead_lbl: Label
 var _pause: Control
 var _pause_title: Label
 var _pause_sub: Label
@@ -97,6 +110,7 @@ func build(p_st: ClientState) -> void:
 	_build_footer()
 	_build_toast_banner()
 	_build_fps()
+	_build_free_fps()
 	_build_pause()
 	_build_game_over()
 	_build_menu_overlay()
@@ -313,6 +327,13 @@ class Crosshair extends Control:
 			draw_arc(c, 17.0, 0, TAU, 40, Color(1, 1, 1, 0.85), 2.0, true)
 			gap = 5.0
 			len = 6.0
+		if weapon == "ak":
+			gap = 7.0
+			len = 8.0
+		if weapon == "melee":
+			draw_circle(c, 2.4, Color(0, 0, 0, 0.7))
+			draw_circle(c, 1.7, col)
+			return
 		for d in [Vector2.LEFT, Vector2.RIGHT, Vector2.UP, Vector2.DOWN]:
 			draw_line(c + d * gap + Vector2(1, 1), c + d * (gap + len) + Vector2(1, 1), Color(0, 0, 0, 0.7), 3.0)
 			draw_line(c + d * gap, c + d * (gap + len), col, 2.0)
@@ -354,6 +375,135 @@ func _build_fps() -> void:
 	_reload.add_theme_stylebox_override("background", UiTheme.box(Color(1, 1, 1, 0.2), Color(0, 0, 0, 0), 4, 0, Vector4(0, 0, 0, 0)))
 	_reload.add_theme_stylebox_override("fill", UiTheme.box(UiTheme.ACCENT, Color(0, 0, 0, 0), 4, 0, Vector4(0, 0, 0, 0)))
 	br.add_child(_reload)
+
+
+## HUD «Свободного FPS»: прицел, здоровье, патроны и запасные магазины, подсказки, красная виньетка урона.
+func _build_free_fps() -> void:
+	_free_root = Control.new()
+	_free_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_free_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_free_root.visible = false
+	root.add_child(_free_root)
+	# виньетка урона: радиальный градиент, прозрачный в центре
+	var grad := Gradient.new()
+	grad.set_color(0, Color(0.8, 0.0, 0.0, 0.0))
+	grad.set_color(1, Color(0.8, 0.0, 0.0, 0.85))
+	grad.set_offset(0, 0.45)
+	var gt := GradientTexture2D.new()
+	gt.gradient = grad
+	gt.fill = GradientTexture2D.FILL_RADIAL
+	gt.fill_from = Vector2(0.5, 0.5)
+	gt.fill_to = Vector2(1.0, 0.5)
+	gt.width = 256
+	gt.height = 256
+	_vignette = TextureRect.new()
+	_vignette.texture = gt
+	_vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_vignette.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_vignette.stretch_mode = TextureRect.STRETCH_SCALE
+	_vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_vignette.modulate.a = 0.0
+	_free_root.add_child(_vignette)
+	_free_cross = Crosshair.new()
+	_free_cross.weapon = "ak"
+	_free_cross.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_free_cross.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_free_root.add_child(_free_cross)
+	# верх: режим, волна и деньги
+	var top := VBoxContainer.new()
+	top.alignment = BoxContainer.ALIGNMENT_BEGIN
+	_free_root.add_child(top)
+	top.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, Control.PRESET_MODE_MINSIZE, 12)
+	_free_top = _label("", 20)
+	_free_top.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	top.add_child(_free_top)
+	# низ слева: здоровье
+	var bl := VBoxContainer.new()
+	_free_root.add_child(bl)
+	bl.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT, Control.PRESET_MODE_MINSIZE, 26)
+	bl.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_free_hp_lbl = _label("", 22, Color("ff8a7a"))
+	bl.add_child(_free_hp_lbl)
+	_free_hp = ProgressBar.new()
+	_free_hp.custom_minimum_size = Vector2(260, 14)
+	_free_hp.show_percentage = false
+	_free_hp.max_value = 100.0
+	_free_hp.add_theme_stylebox_override("background", UiTheme.box(Color(0, 0, 0, 0.45), Color(1, 1, 1, 0.25), 4, 1, Vector4(0, 0, 0, 0)))
+	_free_hp.add_theme_stylebox_override("fill", UiTheme.box(Color("c8402f"), Color(0, 0, 0, 0), 4, 0, Vector4(0, 0, 0, 0)))
+	bl.add_child(_free_hp)
+	# низ справа: оружие и патроны
+	var br := VBoxContainer.new()
+	_free_root.add_child(br)
+	br.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT, Control.PRESET_MODE_MINSIZE, 26)
+	br.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	br.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_free_ammo = _label("", 40)
+	_free_ammo.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	br.add_child(_free_ammo)
+	_free_sub = _label("", 15, Color(UiTheme.TEXT, 0.85))
+	_free_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	br.add_child(_free_sub)
+	_free_reload = ProgressBar.new()
+	_free_reload.custom_minimum_size = Vector2(200, 8)
+	_free_reload.show_percentage = false
+	_free_reload.max_value = 1.0
+	_free_reload.add_theme_stylebox_override("background", UiTheme.box(Color(1, 1, 1, 0.2), Color(0, 0, 0, 0), 4, 0, Vector4(0, 0, 0, 0)))
+	_free_reload.add_theme_stylebox_override("fill", UiTheme.box(UiTheme.ACCENT, Color(0, 0, 0, 0), 4, 0, Vector4(0, 0, 0, 0)))
+	br.add_child(_free_reload)
+	_free_hint = _label("", 13, Color(UiTheme.TEXT, 0.7))
+	_free_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_free_root.add_child(_free_hint)
+	_free_hint.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 8)
+	_free_hint.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_free_hint.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	# плашка «вы погибли» (режим стратегии, только просмотр)
+	_dead_panel = PanelContainer.new()
+	_dead_panel.add_theme_stylebox_override("panel", UiTheme.box(Color(0.35, 0.07, 0.06, 0.92), Color(1, 0.4, 0.3, 0.55), 8, 1, Vector4(22, 10, 22, 10)))
+	_dead_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_dead_panel.visible = false
+	root.add_child(_dead_panel)
+	_dead_lbl = _label("", 20, Color.WHITE)
+	_dead_panel.add_child(_dead_lbl)
+	_dead_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, Control.PRESET_MODE_MINSIZE, 60)
+
+
+## Красная вспышка по краям экрана при уроне.
+func damage_flash(amount: float) -> void:
+	_vig_t = clampf(_vig_t + 0.35 + amount * 0.02, 0.0, 1.0)
+
+
+func _process(delta: float) -> void:
+	if _vignette != null:
+		_vig_t = maxf(0.0, _vig_t - delta * 1.2)
+		var low := 0.0
+		if st != null and st.in_free_fps():
+			var f := st.my_fps()
+			low = clampf(1.0 - float(f["hp"]) / float(f["max_hp"]) - 0.6, 0.0, 0.4)   # у самого края здоровья экран краснеет постоянно
+		_vignette.modulate.a = clampf(_vig_t + low, 0.0, 1.0)
+
+
+func _refresh_free(s: Dictionary) -> void:
+	var f := st.my_fps()
+	var w := str(f["weapon"])
+	_free_cross.weapon = "ak" if w == "ak" else "melee"
+	_free_top.text = "%s  ·  %s: %d  ·  $%d" % [I18n.t("free_title"), I18n.t("wave"), int(s["wave"]), int(s["money"])]
+	_free_hp.value = float(f["hp"])
+	_free_hp_lbl.text = "♥ %d" % int(ceil(float(f["hp"])))
+	if w == "ak":
+		var mag := int(Cfg.PWEAPONS["ak"]["mag"])
+		if float(f["reload"]) > 0.0:
+			_free_ammo.text = I18n.t("reloading")
+		else:
+			_free_ammo.text = "%d / %d" % [int(f["ammo"]), int(f["mags"]) * mag]
+		_free_sub.text = "%s · %d %s" % [I18n.t("w_ak"), int(f["mags"]), I18n.t("free_mags")]
+		if int(f["ammo"]) == 0 and int(f["mags"]) == 0:
+			_free_sub.text = I18n.t("free_no_ammo")
+		_free_reload.value = float(f["reload"])
+	else:
+		_free_ammo.text = I18n.t("w_" + str(f["melee"]))
+		_free_sub.text = "%s: %d" % [I18n.t("damage"), int(Cfg.PWEAPONS[str(f["melee"])]["damage"])]
+		_free_reload.value = 0.0
+	_free_hint.text = I18n.t("free_hint")
 
 
 func _build_pause() -> void:
@@ -540,10 +690,15 @@ func refresh() -> void:
 	var s := st.snap
 	var mine := st.my_turret()
 	var in_fps := not mine.is_empty()
-	_top_left.visible = not in_fps
-	_right_box.visible = not in_fps
-	_hint.visible = not in_fps
+	var in_free := st.in_free_fps()
+	var hide_ui := in_fps or in_free
+	_top_left.visible = not hide_ui
+	_right_box.visible = not hide_ui
+	_hint.visible = not hide_ui
 	_fps_root.visible = in_fps
+	_free_root.visible = in_free
+	_dead_panel.visible = st.is_dead() and not in_fps
+	_dead_lbl.text = I18n.t("dead_banner")
 
 	_lbl_wave.text = "%s: %d" % [I18n.t("wave"), int(s["wave"])]
 	match str(s["state"]):
@@ -553,7 +708,7 @@ func refresh() -> void:
 	_lbl_money.text = "%s: $%d" % [I18n.t("money"), int(s["money"])]
 	_lbl_walls.text = "%s: %d" % [I18n.t("walls"), int(s["walls_left"])]
 	_lbl_turrets.text = "%s: %d" % [I18n.t("turrets"), int(s["turrets_left"])]
-	_btn_start.visible = st.is_host() and str(s["state"]) == "Preparation"
+	_btn_start.visible = st.is_host() and str(s["state"]) == "Preparation" and not st.is_dead()
 	_hint.text = I18n.t("hint_build") if st.is_host() else I18n.t("hint_guest")
 
 	_refresh_incoming(s)
@@ -562,6 +717,8 @@ func refresh() -> void:
 	_refresh_tools(s)
 	_refresh_turret_panel(s)
 	_refresh_fps(s, mine)
+	if in_free:
+		_refresh_free(s)
 	_refresh_game_over(s)
 
 
@@ -607,7 +764,7 @@ func _refresh_players(s: Dictionary) -> void:
 func _refresh_turret_list(s: Dictionary) -> void:
 	var turrets: Array = s["turrets"]
 	var mine := st.my_turret()
-	_tlist_panel.visible = not turrets.is_empty() and mine.is_empty()
+	_tlist_panel.visible = not turrets.is_empty() and mine.is_empty() and not st.in_free_fps()
 	var sig := "%d|" % st.selected_turret
 	for t in turrets:
 		sig += "%s:%s:%s;" % [t["id"], t["weapon"], t["level"]]
@@ -687,7 +844,7 @@ func _refresh_tools(s: Dictionary) -> void:
 
 func _refresh_turret_panel(s: Dictionary) -> void:
 	var t := st.turret_by_id(st.selected_turret)
-	if t.is_empty() or not st.my_turret().is_empty():
+	if t.is_empty() or not st.my_turret().is_empty() or st.in_free_fps():
 		_tp.visible = false
 		return
 	_tp.visible = true

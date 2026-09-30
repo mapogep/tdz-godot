@@ -68,6 +68,13 @@ func update(dt: float) -> bool:
 			var r = damage(z.id, z.burn_dps * dt)
 			if r != null and r["killed"]:
 				continue
+		# игрок рядом: зомби останавливается и кусает его (солдат у ворот удерживает проход)
+		var victim: SimPlayer = sim.fps.victim_near(z.x, z.z, Cfg.ATTACK_REACH + float(Cfg.PLAYER["radius"]) + z.radius * 0.5)
+		if victim != null:
+			sim.fps.hurt(victim, float(zc["attack"]) * float(Cfg.PLAYER["zombie_mul"]) * dt)
+			z.vx = 0.0
+			z.vz = 0.0
+			continue
 		var x0 := z.x
 		var z0 := z.z
 		var budget: float = float(zc["speed"]) * dt

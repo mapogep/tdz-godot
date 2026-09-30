@@ -1,9 +1,9 @@
 extends Node
-## РљРѕСЂРЅРµРІРѕР№ СѓР·РµР»: РјРµРЅСЋ в†” РёРіСЂР°. Host РґРµСЂР¶РёС‚ Р°РІС‚РѕСЂРёС‚РµС‚РЅСѓСЋ СЃРёРјСѓР»СЏС†РёСЋ (GameSim) Рё СЂР°СЃСЃС‹Р»Р°РµС‚ СЃРЅР°РїС€РѕС‚С‹;
-## РєР»РёРµРЅС‚ Р»РёС€СЊ РїРѕРєР°Р·С‹РІР°РµС‚ СЃРЅР°РїС€РѕС‚С‹ Рё С€Р»С‘С‚ РєРѕРјР°РЅРґС‹. Р›РѕРєР°Р»СЊРЅС‹Р№ РёРіСЂРѕРє-Host РїСЂРёРјРµРЅСЏРµС‚ СЃРІРѕРё СЃРЅР°РїС€РѕС‚С‹ РЅР°РїСЂСЏРјСѓСЋ.
+## Корневой узел: меню ↔ игра. Host держит авторитетную симуляцию (GameSim) и рассылает снапшоты;
+## клиент лишь показывает снапшоты и шлёт команды. Локальный игрок-Host применяет свои снапшоты напрямую.
 ##
-## РџР°СЂР°РјРµС‚СЂС‹ РєРѕРјР°РЅРґРЅРѕР№ СЃС‚СЂРѕРєРё РґР»СЏ РїСЂРѕРІРµСЂРѕРє (РїРѕСЃР»Рµ `--`):
-##   --scenario=РёРјСЏ  --shot=РїСѓС‚СЊ.png@РєР°РґСЂ[,РїСѓС‚СЊ2.png@РєР°РґСЂ2]  --quality=0..3  --menu-shot=РїСѓС‚СЊ.png
+## Параметры командной строки для проверок (после `--`):
+##   --scenario=имя  --shot=путь.png@кадр[,путь2.png@кадр2]  --quality=0..3  --menu-shot=путь.png
 
 const SAVE_PATH := "user://save.json"
 
@@ -13,6 +13,7 @@ var world: WorldView
 var cam_rig: CameraRig
 var hud: Hud
 var input_ctl: InputCtl
+var vm: ViewModel
 var postfx: PostFx
 var menu: MainMenu
 
@@ -63,7 +64,7 @@ func _parse_args() -> Dictionary:
 	return out
 
 
-# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ РјРµРЅСЋ Рё Р·Р°РїСѓСЃРє в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ───────────────────────── меню и запуск ─────────────────────────
 
 func _open_menu() -> void:
 	if menu != null:
@@ -113,7 +114,7 @@ func _start_game(mode: String, address: String, port: int, use_save: bool) -> vo
 			var ips := NetHub.local_addresses()
 			hud.toast("%s %s:%d" % [I18n.t("hosting"), ips[0] if ips.size() > 0 else "localhost", port])
 	else:
-		# РєР»РёРµРЅС‚: Р¶РґС‘Рј РїРѕРґРєР»СЋС‡РµРЅРёСЏ, РјРёСЂ СЃС‚СЂРѕРёРј СЃСЂР°Р·Сѓ (РЅР°РїРѕР»РЅРёС‚СЃСЏ СЃРЅР°РїС€РѕС‚Р°РјРё)
+		# клиент: ждём подключения, мир строим сразу (наполнится снапшотами)
 		st.my_id = 0
 		if not NetHub.connected_to_host.is_connected(_on_connected):
 			NetHub.connected_to_host.connect(_on_connected)
@@ -142,10 +143,13 @@ func _build_game() -> void:
 		cam_rig.add_shake(a * clampf(1.6 - d / 30.0, 0.15, 1.0)))
 	world.hit_confirmed.connect(func() -> void: hud.hit_marker())
 	world.own_shot.connect(func(w: String) -> void:
-		cam_rig.add_kick({"gun": 0.035, "machinegun": 0.012, "rocket": 0.09, "flame": 0.0}.get(w, 0.02)))
+		cam_rig.add_kick({"gun": 0.035, "machinegun": 0.012, "rocket": 0.09, "flame": 0.0, "ak": 0.018, "melee": 0.03}.get(w, 0.02)))
 	cam_rig = CameraRig.new()
 	add_child(cam_rig)
 	cam_rig.setup(world, Cfg.FIELD_SIZE)
+	vm = ViewModel.new()          # оружие от первого лица крепится к камере
+	cam_rig.cam.add_child(vm)
+	vm.visible = false
 	postfx = PostFx.new()
 	add_child(postfx)
 	postfx.set_quality(q)
@@ -159,6 +163,18 @@ func _build_game() -> void:
 	input_ctl.world = world
 	input_ctl.cam_rig = cam_rig
 	input_ctl.hud = hud
+	input_ctl.vm = vm
+	world.free_fired.connect(func() -> void: vm.fire())
+	world.free_swung.connect(func(m: String) -> void: vm.swing(float(Cfg.PWEAPONS[m]["cooldown"]) * 0.95))
+	world.free_reloading.connect(func() -> void: vm.reload(float(Cfg.PWEAPONS["ak"]["reload"])))
+	world.free_hurt.connect(func(a: float) -> void:
+		hud.damage_flash(a)
+		cam_rig.add_shake(0.22)
+		Sfx.play("pain", null, -8.0))
+	world.free_died.connect(func() -> void:
+		hud.banner(I18n.t("dead_banner"))
+		postfx.flash(0.9))
+	world.free_revived.connect(func() -> void: hud.banner(I18n.t("revived")))
 	input_ctl.send = _send_cmd
 	input_ctl.state_changed.connect(hud.refresh)
 	Settings.changed.connect(_on_settings_changed)
@@ -200,7 +216,7 @@ func _end_game(reason: String = "") -> void:
 		menu.set_status(I18n.t(reason))
 
 
-# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ РєРѕРјР°РЅРґС‹ Рё СЃРЅР°РїС€РѕС‚С‹ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ───────────────────────── команды и снапшоты ─────────────────────────
 
 func _send_cmd(msg: Dictionary) -> void:
 	NetHub.send_command(msg)
@@ -254,7 +270,7 @@ func _on_snapshot(s: Dictionary) -> void:
 	_prev_snap = s
 
 
-## Р—РІСѓРєРё Рё Р±Р°РЅРЅРµСЂС‹ РїРѕ СЂР°Р·РЅРёС†Рµ РјРµР¶РґСѓ РґРІСѓРјСЏ СЃРЅР°РїС€РѕС‚Р°РјРё.
+## Звуки и баннеры по разнице между двумя снапшотами.
 func _react_to_changes(old: Dictionary, cur: Dictionary) -> void:
 	if old.is_empty():
 		return
@@ -281,7 +297,7 @@ func _react_to_changes(old: Dictionary, cur: Dictionary) -> void:
 			break
 	if not cur["destroyed"].is_empty():
 		postfx.flash(0.35)
-	# СЂРµРґРєРёРµ СЃС‚РѕРЅС‹ Р·РѕРјР±Рё РЅР° РїРѕР»Рµ
+	# редкие стоны зомби на поле
 	if cur["zombies"].size() > 0 and randf() < 0.012:
 		var z: Dictionary = cur["zombies"][randi() % cur["zombies"].size()]
 		Sfx.play("groan", Vector3(z["x"], 1.5, z["z"]), -4.0)
@@ -309,7 +325,7 @@ func _on_hud_action(name: String, arg: Variant) -> void:
 		"toMenu": _end_game()
 
 
-# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ Р°РІС‚РѕСЃРѕС…СЂР°РЅРµРЅРёРµ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ───────────────────────── автосохранение ─────────────────────────
 
 func _autosave() -> void:
 	if sim == null or is_client:
@@ -319,12 +335,12 @@ func _autosave() -> void:
 		f.store_string(JSON.stringify(sim.to_save()))
 
 
-# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ РіР»Р°РІРЅС‹Р№ С†РёРєР» в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ───────────────────────── главный цикл ─────────────────────────
 
 func _process(delta: float) -> void:
 	_frame += 1
 	if in_game and not is_client and sim != null:
-		# С„РёРєСЃРёСЂРѕРІР°РЅРЅС‹Р№ С€Р°Рі СЃРёРјСѓР»СЏС†РёРё; СЃРЅР°РїС€РѕС‚ РїРѕСЃР»Рµ РєР°Р¶РґРѕРіРѕ С€Р°РіР° (СЃРѕР±С‹С‚РёСЏ РЅРµ С‚РµСЂСЏСЋС‚СЃСЏ)
+		# фиксированный шаг симуляции; снапшот после каждого шага (события не теряются)
 		_acc += minf(delta, 0.25)
 		var dt := 1.0 / Cfg.TICK_RATE
 		var steps := 0
@@ -346,10 +362,10 @@ func _process(delta: float) -> void:
 	_take_shots()
 
 
-# в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ СЃС†РµРЅР°СЂРёРё РґР»СЏ РїСЂРѕРІРµСЂРѕРє в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ───────────────────────── сценарии для проверок ─────────────────────────
 
 func _setup_scenario(name: String) -> void:
-	# С€Р°РіРё: [РєР°РґСЂ, Callable]; РєРѕРјР°РЅРґС‹ вЂ” С‚РѕР»СЊРєРѕ РґР»СЏ Host (single)
+	# шаги: [кадр, Callable]; команды — только для Host (single)
 	var build := func() -> void:
 		for y in range(1, 19):
 			_on_command(1, {"t": "buildWall", "x": 8, "y": y})
@@ -364,6 +380,28 @@ func _setup_scenario(name: String) -> void:
 			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 8; sim.turret_stock = 8],
 				[5, build], [10, func() -> void: _on_command(1, {"t": "startWave"})],
 				[12, func() -> void: cam_rig.focus_target = Vector3(9, 0, 15); cam_rig.dist_target = 9.0]]
+		"free", "free_melee":
+			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 8; sim.turret_stock = 8],
+				[5, build], [10, func() -> void: _on_command(1, {"t": "startWave"})],
+				[20, func() -> void: input_ctl.go_free()],
+				[40, func() -> void:
+					for i in 6:
+						sim.zombies.spawn(8, ["normal", "fat", "fast"][i % 3])
+						var zz: SimZombie = sim.zombies.zombies.values()[sim.zombies.zombies.size() - 1]
+						zz.x = 12.5 + i * 0.6
+						zz.z = 8.6 + i * 0.4],
+				[60, func() -> void:
+					if name == "free_melee":
+						input_ctl._set_free_weapon("melee")
+					world.free_yaw = -PI / 2.0 + 0.1
+					input_ctl._free_fire = true
+					input_ctl._send_free(true)]]
+		"rotate":
+			_scenario_steps = [[5, func() -> void: cam_rig.dist_target = 22.0; cam_rig.yaw_target = 0.9]]
+		"dead":
+			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 8],
+				[10, func() -> void: input_ctl.go_free()],
+				[30, func() -> void: sim.fps.hurt(sim.fps.get_player(1), 500.0)]]
 		"fps_mg", "fps_flame", "fps_rocket", "fps_gun":
 			var w := name.substr(4)
 			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 8; sim.turret_stock = 8],

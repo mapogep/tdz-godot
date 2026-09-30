@@ -6,6 +6,12 @@ extends Node3D
 signal shake_requested(amount: float, pos: Vector3)
 signal hit_confirmed()                       # своя ручная очередь попала (для маркера в прицеле)
 signal own_shot(weapon: String)              # свой выстрел из FPS (отдача камеры)
+signal free_fired()                          # свой выстрел из АК в «Свободном FPS» (вспышка/отдача оружия)
+signal free_swung(melee: String)             # свой удар холодным оружием
+signal free_reloading()
+signal free_hurt(amount: float)
+signal free_died()
+signal free_revived()
 
 const WALL_CAP := 640
 const HP_BAR_SIZE := Vector2(0.9, 0.14)
@@ -27,6 +33,13 @@ var corpses: Array = []
 var fps_turret_id := 0                # какая турель занята локальным игроком (0 — никакая)
 var fps_yaw := 0.0
 var fps_pitch := 0.0
+
+# «Свободный FPS»: локальный игрок (позиция ног — с клиентским предсказанием) и солдаты остальных
+var free_active := false
+var free_pos := Vector3.ZERO
+var free_yaw := -PI / 2.0
+var free_pitch := 0.0
+var player_views: Dictionary = {}     # pid -> Dictionary
 
 var _walls_mm: MultiMeshInstance3D
 var _wall_keys: Array = []
@@ -357,7 +370,9 @@ func apply_snapshot(s: Dictionary) -> void:
 	_sync_turrets(s["turrets"])
 	_sync_zombies(s["zombies"], s["deaths"])
 	_sync_rockets(s["rockets"])
+	_sync_players(s["players"])
 	_play_events(s)
+	_play_fps_events(s.get("fps_events", []))
 
 
 func _lift(elevated: bool) -> float:
@@ -630,6 +645,134 @@ func _play_events(s: Dictionary) -> void:
 		Sfx.play("coin", null, -6.0)
 
 
+# ───────────────────────── «Свободный FPS»: солдаты ─────────────────────────
+
+func _sync_players(list: Array) -> void:
+	var seen := {}
+	for p in list:
+		var pid: int = p["id"]
+		var f: Dictionary = p.get("fps", {})
+		if pid == my_id or f.is_empty() or not (bool(f["active"]) and bool(f["alive"])):
+			continue
+		seen[pid] = true
+		var v: Dictionary = player_views.get(pid, {})
+		if v.is_empty():
+			var rig := PlayerRig.create(str(p["name"]), str(f["melee"]))
+			rig.position = Vector3(f["x"], 0, f["z"])
+			add_child(rig)
+			v = {"rig": rig, "x": f["x"], "z": f["z"], "tx": f["x"], "tz": f["z"], "yaw": f["yaw"], "pitch": 0.0, "speed": 0.0}
+			player_views[pid] = v
+		v["tx"] = f["x"]
+		v["tz"] = f["z"]
+		v["yaw"] = f["yaw"]
+		v["pitch"] = f["pitch"]
+	for pid in player_views.keys():
+		if not seen.has(pid):
+			var v2: Dictionary = player_views[pid]
+			player_views.erase(pid)
+			if is_instance_valid(v2["rig"]):
+				v2["rig"].queue_free()
+
+
+func _update_players(delta: float) -> void:
+	var a := 1.0 - exp(-delta * 14.0)
+	for pid in player_views.keys():
+		var v: Dictionary = player_views[pid]
+		var rig: PlayerRig = v["rig"]
+		var ox: float = v["x"]
+		var oz: float = v["z"]
+		v["x"] = ox + (float(v["tx"]) - ox) * a
+		v["z"] = oz + (float(v["tz"]) - oz) * a
+		var sp := sqrt(pow(float(v["x"]) - ox, 2.0) + pow(float(v["z"]) - oz, 2.0)) / maxf(delta, 0.0001)
+		v["speed"] = lerpf(float(v["speed"]), sp, 1.0 - exp(-delta * 10.0))
+		rig.position.x = v["x"]
+		rig.position.z = v["z"]
+		rig.update(delta, float(v["yaw"]), float(v["pitch"]), float(v["speed"]))
+
+
+## Точка дула для своего выстрела: чуть впереди, правее и ниже глаз.
+func own_muzzle() -> Vector3:
+	var dir := SimMath.aim_direction(free_yaw, free_pitch)
+	var right := Vector3(-cos(free_yaw), 0.0, sin(free_yaw))
+	return free_pos + Vector3(0, float(Cfg.PLAYER["eye"]), 0) + dir * 0.8 + right * 0.16 + Vector3(0, -0.17, 0)
+
+
+func _play_fps_events(list: Array) -> void:
+	for e in list:
+		var pid: int = e["pid"]
+		var own := pid == my_id
+		var v: Dictionary = player_views.get(pid, {})
+		match str(e["k"]):
+			"shot":
+				var to: Vector3 = e["to"]
+				var from: Vector3 = e["from"]
+				if own:
+					from = own_muzzle()
+					free_fired.emit()
+					own_shot.emit("ak")
+					Sfx.play("ak", null, -3.0)
+				elif not v.is_empty():
+					var rig: PlayerRig = v["rig"]
+					from = rig.muzzle.global_position
+					rig.shoot_flash()
+					Sfx.play("ak", from, 0.0)
+				else:
+					Sfx.play("ak", from, 0.0)
+				fx.tracer(from, to, Color("ffe2a0"), 0.014)
+				if not own:
+					fx.muzzle_flash(from, 0.7)
+				var hit := int(e["hit"])
+				if hit != 0:
+					fx.sparks(to, Color("ff5a4a"), 4)
+					var zv: Dictionary = zombie_views.get(hit, {})
+					if not zv.is_empty():
+						zv["flash"] = 0.12
+						Sfx.play("hurt", to)
+					if own:
+						hit_confirmed.emit()
+						Sfx.play("hit")
+				else:
+					fx.sparks(to, Color("cccccc"), 2)
+			"swing":
+				var melee := str(e["melee"])
+				if own:
+					free_swung.emit(melee)
+					Sfx.play("swing", null, -2.0)
+				elif not v.is_empty():
+					(v["rig"] as PlayerRig).swing()
+					Sfx.play("swing", (v["rig"] as Node3D).global_position + Vector3(0, 1.2, 0))
+				for zid in e["hits"]:
+					var zv2: Dictionary = zombie_views.get(int(zid), {})
+					if zv2.is_empty():
+						continue
+					zv2["flash"] = 0.15
+					var zp := Vector3(zv2["x"], 1.1, zv2["z"])
+					fx.sparks(zp, Color("b03020"), 6)
+					fx.blood_decal(Vector3(zp.x, 0.0, zp.z))
+					Sfx.play("chop", zp)
+					if own:
+						hit_confirmed.emit()
+						own_shot.emit("melee")
+			"reload":
+				if own:
+					free_reloading.emit()
+					Sfx.play("reload", null, -6.0)
+				elif not v.is_empty():
+					Sfx.play("reload", (v["rig"] as Node3D).global_position + Vector3(0, 1.2, 0), -6.0)
+			"hurt":
+				if own:
+					free_hurt.emit(float(e["amount"]))
+			"die":
+				var dp := Vector3(e["x"], 0.9, e["z"])
+				fx.death_burst(dp, false)
+				Sfx.play("pain", dp)
+				if own:
+					free_died.emit()
+			"revive":
+				if own:
+					free_revived.emit()
+
+
 # ───────────────────────── кадр ─────────────────────────
 
 func _process(delta: float) -> void:
@@ -689,6 +832,8 @@ func _process(delta: float) -> void:
 		bar.position = Vector3(v["x"], rig.top_y + 0.1, v["z"])
 		var f2: float = v["hp_frac"]
 		_set_bar(bar, f2, Color("59d64a") if f2 > 0.5 else (Color("e0c040") if f2 > 0.25 else Color("e04a3a")))
+
+	_update_players(delta)
 
 	# ракеты: плавный полёт и дымный след
 	var ra := 1.0 - exp(-delta * 25.0)
