@@ -185,3 +185,33 @@ static func ground_material(field_size: float) -> ShaderMaterial:
 	m.set_shader_parameter("albedo_tex", tex("res://assets/tex/ground.jpg"))
 	m.set_shader_parameter("field_size", field_size)
 	return m
+
+
+static var _tripo_mat: StandardMaterial3D
+
+
+## Модели Tripo: одна сетка с вершинными цветами, без текстур. Возвращает MeshInstance3D
+## (own_material — своя копия материала для вспышек), либо null, если файла нет.
+static func tripo(model: String, own_material: bool = false) -> MeshInstance3D:
+	var path := "res://assets/models/%s.glb" % model
+	if not ResourceLoader.exists(path):
+		return null
+	var scene: Node = (load(path) as PackedScene).instantiate()
+	var src := scene.find_children("*", "MeshInstance3D", true, false)
+	if src.is_empty():
+		scene.free()
+		return null
+	var mi := MeshInstance3D.new()
+	mi.mesh = (src[0] as MeshInstance3D).mesh
+	scene.free()
+	if _tripo_mat == null:
+		_tripo_mat = StandardMaterial3D.new()
+		_tripo_mat.vertex_color_use_as_albedo = true
+		_tripo_mat.albedo_color = Color(0.66, 0.64, 0.6)
+		_tripo_mat.roughness = 0.82
+		_tripo_mat.emission_enabled = true
+		_tripo_mat.emission = Color(1.0, 0.25, 0.08)
+		_tripo_mat.emission_energy_multiplier = 0.0
+	mi.material_override = _tripo_mat.duplicate() if own_material else _tripo_mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	return mi

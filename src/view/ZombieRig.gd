@@ -20,6 +20,8 @@ var _elbow_r: Node3D
 var _flash := 0.0
 var _burning := false
 var _body: Node3D
+var _tripo: MeshInstance3D
+var _tripo_base_y := 0.0
 static var _shirt_tex: ImageTexture
 
 
@@ -96,6 +98,8 @@ func _part(size: Vector3, m: Material, pos: Vector3, parent: Node3D) -> MeshInst
 
 
 func _build() -> void:
+	if _build_tripo():
+		return
 	var skin := _mat(Color("9a9c86"))
 	var flesh := _mat(Color("7a2a26"), 0.8)
 	var shirt := _mat(Color.WHITE, 1.0, _shirt_texture())
@@ -241,6 +245,9 @@ func _find_meshes(root: Node) -> Array:
 
 ## Анимация шага. phase — накопленная фаза шага.
 func animate(_dt: float, phase: float) -> void:
+	if _tripo != null:
+		_animate_tripo(phase)
+		return
 	var s := sin(phase)
 	var c := cos(phase)
 	_leg_l.rotation.x = s * 0.55
@@ -278,3 +285,41 @@ func _apply_emission() -> void:
 		e = 0.5 + 0.2 * sin(Time.get_ticks_msec() / 60.0)
 	for m in _mats:
 		m.emission_energy_multiplier = e
+
+
+## Модель zombie_tripo.glb (статичная сетка с вершинными цветами): лицом к -X → поворот на +90°.
+## «Шаг» имитируем покачиванием: наклон вперёд-назад, крен, подпрыгивание.
+func _build_tripo() -> bool:
+	var mi := Assets.tripo("zombie_tripo", true)
+	if mi == null:
+		return false
+	var zc: Dictionary = Cfg.ZOMBIES[type]
+	var s: float = zc["scale"]
+	var k: float = float(zc["height"]) / 0.946 * 0.98     # рост модели 0.946 → высота из Cfg
+	_body = Node3D.new()
+	add_child(_body)
+	_tripo = mi
+	mi.rotation.y = PI / 2.0
+	mi.scale = Vector3.ONE * k
+	_tripo_base_y = 0.455 * k
+	mi.position.y = _tripo_base_y
+	_body.add_child(mi)
+	var mat: StandardMaterial3D = mi.material_override
+	if type == "fat":
+		scale = Vector3(s * 1.05, s, s * 1.05)
+		mat.albedo_color = mat.albedo_color * Color(0.72, 0.85, 0.6)
+	elif type == "fast":
+		scale = Vector3.ONE * s
+		mat.albedo_color = mat.albedo_color * Color(1.0, 0.9, 0.55)
+	else:
+		scale = Vector3.ONE
+	_mats = [mat]
+	top_y = float(zc["height"]) * (s if type != "normal" else 1.0) + 0.15
+	return true
+
+
+func _animate_tripo(phase: float) -> void:
+	var s := sin(phase)
+	_tripo.position.y = _tripo_base_y + absf(s) * 0.05
+	_body.rotation.x = 0.1 + s * 0.05      # наклон вперёд-назад
+	_body.rotation.z = s * 0.09            # крен на шаг

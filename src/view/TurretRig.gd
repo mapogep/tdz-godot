@@ -94,7 +94,8 @@ func _build_base() -> Array:
 	var steel := _mat(Color("6b6053"), 0.55, 0.6)
 	var dark := _mat(Color("2b2723"), 0.5, 0.7)
 	var accent_m := _mat(accent, 0.4, 0.35, accent, 0.6)
-	_cyl(0.46, 0.5, 0.22, dark, Vector3(0, 0.11, 0), false, null, 20)
+	if weapon != "gun":
+		_cyl(0.46, 0.5, 0.22, dark, Vector3(0, 0.11, 0), false, null, 20)
 	var ring := MeshInstance3D.new()
 	var tor := TorusMesh.new()
 	tor.inner_radius = 0.38
@@ -105,7 +106,8 @@ func _build_base() -> Array:
 	ring.material_override = accent_m
 	ring.position = Vector3(0, 0.24, 0)
 	add_child(ring)
-	_cyl(0.22, 0.32, 0.7, steel, Vector3(0, 0.58, 0), false, null, 16)
+	if weapon != "gun":   # у базовой турели собственные ножки — стойка не нужна
+		_cyl(0.22, 0.32, 0.7, steel, Vector3(0, 0.58, 0), false, null, 16)
 	# точки-индикаторы уровня по кругу основания
 	for i in level:
 		var a := float(i) / 10.0 * TAU
@@ -129,23 +131,28 @@ func _build() -> void:
 	base_z = pivot.position.z
 
 
+## Базовая турель — модель turret_tripo.glb (ствол вдоль +X → поворот на -90° вокруг Y, чтобы ствол шёл по +Z).
+const TRIPO_HALF := Vector3(0.49, 0.46, 0.40)   # половинные размеры исходной модели
+
+
 func _build_gun(_m: Array) -> void:
-	head.position.y = 0.93
-	var w := Assets.instance("weapon-turret")
-	var s := 1.9 + level * 0.03
-	if w != null:
-		Assets.grade_node(w, 0.6, 0.95, 0.1)
-		w.scale = Vector3.ONE * s
-		pivot.add_child(w)
-		muzzle.position = Vector3(0, 0.3 * s * 0.55, 0.31 * s + 0.02)
-		pitch_scale = 0.5
-		cam_back = 0.31 * s + 0.4
-		cam_up = 0.3 * s + 0.22
+	var s := 1.05 + level * 0.012
+	var mi := Assets.tripo("turret_tripo")
+	if mi != null:
+		mi.rotation.y = -PI / 2.0
+		mi.scale = Vector3.ONE * s
+		head.position.y = 0.0
+		pivot.position.y = TRIPO_HALF.y * s       # центр модели: ножки стоят на нулевом уровне
+		pivot.add_child(mi)
+		muzzle.position = Vector3(0, 0.27 * s, TRIPO_HALF.x * s + 0.02)
+		pitch_scale = 0.0
+		cam_back = 1.15
+		cam_up = 0.85
 	else:   # запасной вариант без модели
+		head.position.y = 0.93
 		_box(Vector3(0.5, 0.3, 0.6), _m[0], Vector3(0, 0.15, 0), pivot)
 		_cyl(0.06, 0.07, 0.8, _m[1], Vector3(0, 0.2, 0.55), true, pivot)
 		muzzle.position = Vector3(0, 0.2, 0.95)
-
 
 func _build_mg(m: Array) -> void:
 	var steel: StandardMaterial3D = m[0]

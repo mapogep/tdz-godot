@@ -3,3 +3,4 @@
 save*.json
 /shots/
 
+/build/

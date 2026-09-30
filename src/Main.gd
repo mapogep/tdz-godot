@@ -1,4 +1,4 @@
-﻿extends Node
+extends Node
 ## РљРѕСЂРЅРµРІРѕР№ СѓР·РµР»: РјРµРЅСЋ в†” РёРіСЂР°. Host РґРµСЂР¶РёС‚ Р°РІС‚РѕСЂРёС‚РµС‚РЅСѓСЋ СЃРёРјСѓР»СЏС†РёСЋ (GameSim) Рё СЂР°СЃСЃС‹Р»Р°РµС‚ СЃРЅР°РїС€РѕС‚С‹;
 ## РєР»РёРµРЅС‚ Р»РёС€СЊ РїРѕРєР°Р·С‹РІР°РµС‚ СЃРЅР°РїС€РѕС‚С‹ Рё С€Р»С‘С‚ РєРѕРјР°РЅРґС‹. Р›РѕРєР°Р»СЊРЅС‹Р№ РёРіСЂРѕРє-Host РїСЂРёРјРµРЅСЏРµС‚ СЃРІРѕРё СЃРЅР°РїС€РѕС‚С‹ РЅР°РїСЂСЏРјСѓСЋ.
 ##
@@ -353,20 +353,20 @@ func _setup_scenario(name: String) -> void:
 	var build := func() -> void:
 		for y in range(1, 19):
 			_on_command(1, {"t": "buildWall", "x": 8, "y": y})
-		_on_command(1, {"t": "buildTurret", "x": 8, "y": 17, "weapon": "flame"})
+		_on_command(1, {"t": "buildTurret", "x": 8, "y": 17, "weapon": "gun"})
 		_on_command(1, {"t": "buildTurret", "x": 8, "y": 15, "weapon": "machinegun"})
 		_on_command(1, {"t": "buildTurret", "x": 8, "y": 13, "weapon": "rocket"})
-		_on_command(1, {"t": "buildTurret", "x": 8, "y": 11, "weapon": "gun"})
+		_on_command(1, {"t": "buildTurret", "x": 8, "y": 11, "weapon": "flame"})
 	match name:
 		"field":
 			_scenario_steps = [[5, func() -> void: cam_rig.dist_target = 24.0]]
 		"battle":
-			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 8],
+			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 8; sim.turret_stock = 8],
 				[5, build], [10, func() -> void: _on_command(1, {"t": "startWave"})],
-				[12, func() -> void: cam_rig.focus_target = Vector3(9, 0, 15); cam_rig.dist_target = 14.0]]
+				[12, func() -> void: cam_rig.focus_target = Vector3(9, 0, 15); cam_rig.dist_target = 9.0]]
 		"fps_mg", "fps_flame", "fps_rocket", "fps_gun":
 			var w := name.substr(4)
-			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 8],
+			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 8; sim.turret_stock = 8],
 				[5, build], [10, func() -> void: _on_command(1, {"t": "startWave"})],
 				[40, func() -> void:
 					for t: SimTurret in sim.turrets.turrets.values():
