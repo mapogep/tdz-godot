@@ -29,6 +29,7 @@ var _shots: Array = []
 
 
 func _ready() -> void:
+	get_window().min_size = Vector2i(960, 560)     # меньше интерфейс не помещается
 	_args = _parse_args()
 	NetHub.command_received.connect(_on_command)
 	NetHub.snapshot_received.connect(_on_remote_snapshot)
@@ -402,6 +403,9 @@ func _setup_scenario(name: String) -> void:
 			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 8],
 				[10, func() -> void: input_ctl.go_free()],
 				[30, func() -> void: sim.fps.hurt(sim.fps.get_player(1), 500.0)]]
+		"panel":
+			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 8; sim.turret_stock = 8],
+				[5, build], [15, func() -> void: input_ctl.select_turret(sim.turrets.turrets.keys()[0])]]
 		"fps_mg", "fps_flame", "fps_rocket", "fps_gun":
 			var w := name.substr(4)
 			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 8; sim.turret_stock = 8],

@@ -192,6 +192,7 @@ func _build_top_right() -> void:
 	_right_box.add_theme_constant_override("separation", 8)
 	root.add_child(_right_box)
 	_right_box.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT, Control.PRESET_MODE_MINSIZE, 12)
+	_right_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", 6)
 	top.alignment = BoxContainer.ALIGNMENT_END
@@ -226,6 +227,8 @@ func _build_tools() -> void:
 	_tools_panel = PanelContainer.new()
 	root.add_child(_tools_panel)
 	_tools_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 40)
+	_tools_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_tools_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	_tools_row = HBoxContainer.new()
 	_tools_row.add_theme_constant_override("separation", 6)
 	_tools_panel.add_child(_tools_row)
@@ -236,7 +239,13 @@ func _build_turret_panel() -> void:
 	root.add_child(_tp)
 	_tp.custom_minimum_size = Vector2(280, 0)
 	_tp.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT, Control.PRESET_MODE_MINSIZE, 14)
-	_tp.position.y -= 46
+	# правый нижний угол: панель растёт влево и вверх, поэтому всегда остаётся на экране
+	_tp.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_tp.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_tp.offset_right = -14.0
+	_tp.offset_bottom = -60.0
+	_tp.offset_left = -294.0
+	_tp.offset_top = -60.0
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 2)
 	_tp.add_child(v)
@@ -283,6 +292,9 @@ func _build_footer() -> void:
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(_hint)
 	_hint.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 10)
+	_hint.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_hint.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_conn = _label("", 12, Color(UiTheme.TEXT, 0.6))
 	root.add_child(_conn)
 	_conn.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT, Control.PRESET_MODE_MINSIZE, 10)
@@ -473,6 +485,7 @@ func damage_flash(amount: float) -> void:
 
 
 func _process(delta: float) -> void:
+	_fit_panels()
 	if _vignette != null:
 		_vig_t = maxf(0.0, _vig_t - delta * 1.2)
 		var low := 0.0
@@ -480,6 +493,23 @@ func _process(delta: float) -> void:
 			var f := st.my_fps()
 			low = clampf(1.0 - float(f["hp"]) / float(f["max_hp"]) - 0.6, 0.0, 0.4)   # у самого края здоровья экран краснеет постоянно
 		_vignette.modulate.a = clampf(_vig_t + low, 0.0, 1.0)
+
+
+## Панели, не помещающиеся в окно, уменьшаются (от угла привязки), чтобы всё было видно при любом размере окна.
+func _fit_panels() -> void:
+	var vp := root.get_viewport_rect().size
+	_hint.custom_minimum_size.x = minf(vp.x - 40.0, 1100.0)
+	if _tp != null and _tp.visible:
+		var sz := _tp.get_combined_minimum_size()
+		var k := minf(1.0, minf((vp.y - 120.0) / maxf(sz.y, 1.0), (vp.x - 30.0) / maxf(sz.x, 1.0)))
+		k = clampf(k, 0.45, 1.0)
+		_tp.pivot_offset = Vector2(_tp.size.x, _tp.size.y)
+		_tp.scale = Vector2(k, k)
+	if _tools_panel != null and _tools_panel.visible:
+		var sz2 := _tools_panel.get_combined_minimum_size()
+		var k2 := clampf((vp.x - 20.0) / maxf(sz2.x, 1.0), 0.5, 1.0)
+		_tools_panel.pivot_offset = Vector2(_tools_panel.size.x * 0.5, _tools_panel.size.y)
+		_tools_panel.scale = Vector2(k2, k2)
 
 
 func _refresh_free(s: Dictionary) -> void:

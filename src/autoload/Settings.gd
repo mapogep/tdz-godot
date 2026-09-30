@@ -68,3 +68,10 @@ func set_fullscreen(v: bool) -> void:
 ## Индекс качества 0..3.
 func q_index() -> int:
 	return QUALITIES.find(quality)
+
+
+## F11 — полноэкранный режим в любой момент (меню, игра, паузa).
+func _unhandled_key_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and (event as InputEventKey).keycode == KEY_F11:
+		set_fullscreen(not fullscreen)
+		get_viewport().set_input_as_handled()
