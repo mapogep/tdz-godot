@@ -20,8 +20,11 @@ var _elbow_r: Node3D
 var _flash := 0.0
 var _burning := false
 var _body: Node3D
-var _tripo: MeshInstance3D
-var _tripo_base_y := 0.0
+var _skel_root: Node3D          # сцена zombie_rigged.tscn (скелет + AnimationPlayer)
+var _anim: AnimationPlayer
+var _mode := ""
+var _last_phase := 0.0
+var _still := 0.0
 static var _shirt_tex: ImageTexture
 
 
@@ -98,7 +101,7 @@ func _part(size: Vector3, m: Material, pos: Vector3, parent: Node3D) -> MeshInst
 
 
 func _build() -> void:
-	if _build_tripo():
+	if _build_rigged():
 		return
 	var skin := _mat(Color("9a9c86"))
 	var flesh := _mat(Color("7a2a26"), 0.8)
@@ -245,8 +248,8 @@ func _find_meshes(root: Node) -> Array:
 
 ## Анимация шага. phase — накопленная фаза шага.
 func animate(_dt: float, phase: float) -> void:
-	if _tripo != null:
-		_animate_tripo(phase)
+	if _skel_root != null:
+		_animate_rigged(_dt, phase)
 		return
 	var s := sin(phase)
 	var c := cos(phase)
@@ -287,24 +290,24 @@ func _apply_emission() -> void:
 		m.emission_energy_multiplier = e
 
 
-## Модель zombie_tripo.glb (статичная сетка с вершинными цветами): лицом к -X → поворот на +90°.
-## «Шаг» имитируем покачиванием: наклон вперёд-назад, крен, подпрыгивание.
-func _build_tripo() -> bool:
-	var mi := Assets.tripo("zombie_tripo", true)
-	if mi == null:
+## Сцена zombie_rigged.tscn (собрана tools/rig_models.gd): скелет из 16 костей, автоматические веса, анимации walk/attack/idle.
+## Исходная модель смотрит в -Z, поэтому корень поворачиваем на 180°.
+func _build_rigged() -> bool:
+	if not ResourceLoader.exists("res://assets/models/zombie_rigged.tscn"):
 		return false
 	var zc: Dictionary = Cfg.ZOMBIES[type]
 	var s: float = zc["scale"]
 	var k: float = float(zc["height"]) / 0.946 * 0.98     # рост модели 0.946 → высота из Cfg
-	_body = Node3D.new()
-	add_child(_body)
-	_tripo = mi
-	mi.rotation.y = PI / 2.0
-	mi.scale = Vector3.ONE * k
-	_tripo_base_y = 0.455 * k
-	mi.position.y = _tripo_base_y
-	_body.add_child(mi)
-	var mat: StandardMaterial3D = mi.material_override
+	_skel_root = (load("res://assets/models/zombie_rigged.tscn") as PackedScene).instantiate()
+	_skel_root.rotation.y = PI
+	_skel_root.scale = Vector3.ONE * k
+	_skel_root.position.y = 0.455 * k
+	add_child(_skel_root)
+	_anim = _skel_root.get_node("AnimationPlayer")
+	var body := _skel_root.find_child("Body", true, false) as MeshInstance3D
+	var mat := Assets.tripo_material()
+	body.material_override = mat
+	body.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	if type == "fat":
 		scale = Vector3(s * 1.05, s, s * 1.05)
 		mat.albedo_color = mat.albedo_color * Color(0.72, 0.85, 0.6)
@@ -315,11 +318,29 @@ func _build_tripo() -> bool:
 		scale = Vector3.ONE
 	_mats = [mat]
 	top_y = float(zc["height"]) * (s if type != "normal" else 1.0) + 0.15
+	_set_mode("walk")
 	return true
 
 
-func _animate_tripo(phase: float) -> void:
-	var s := sin(phase)
-	_tripo.position.y = _tripo_base_y + absf(s) * 0.05
-	_body.rotation.x = 0.1 + s * 0.05      # наклон вперёд-назад
-	_body.rotation.z = s * 0.09            # крен на шаг
+func _set_mode(m: String) -> void:
+	if m == _mode:
+		return
+	_mode = m
+	_anim.play(m)
+	if m == "walk":
+		_anim.pause()
+
+
+## Пока зомби идёт — поза берётся из фазы шага (ноги точно попадают в такт с перемещением);
+## остановился (упёрся в турель) — играет анимация атаки.
+func _animate_rigged(dt: float, phase: float) -> void:
+	if absf(phase - _last_phase) < 0.0005:
+		_still += dt
+	else:
+		_still = 0.0
+	_last_phase = phase
+	if _still > 0.25:
+		_set_mode("attack")
+	else:
+		_set_mode("walk")
+		_anim.seek(fposmod(phase / TAU, 1.0), true)

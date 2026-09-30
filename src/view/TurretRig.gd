@@ -131,21 +131,43 @@ func _build() -> void:
 	base_z = pivot.position.z
 
 
-## Базовая турель — модель turret_tripo.glb (ствол вдоль +X → поворот на -90° вокруг Y, чтобы ствол шёл по +Z).
+## Базовая турель — turret_rigged.tscn (модель Tripo + скелет из tools/rig_models.gd).
+## Кости: root (ножки, неподвижны), turret (плита и купол — yaw), gun (орудие — pitch и отдача).
+## Ствол в модели идёт вдоль +X → корень сцены повёрнут на -90° вокруг Y, ствол смотрит в +Z.
 const TRIPO_HALF := Vector3(0.49, 0.46, 0.40)   # половинные размеры исходной модели
+
+var _skel: Skeleton3D
+var _bone_turret := -1
+var _bone_gun := -1
+var _gun_rest := Vector3.ZERO
 
 
 func _build_gun(_m: Array) -> void:
 	var s := 1.05 + level * 0.012
-	var mi := Assets.tripo("turret_tripo")
-	if mi != null:
+	if ResourceLoader.exists("res://assets/models/turret_rigged.tscn"):
+		var mi := (load("res://assets/models/turret_rigged.tscn") as PackedScene).instantiate() as Node3D
 		mi.rotation.y = -PI / 2.0
 		mi.scale = Vector3.ONE * s
 		head.position.y = 0.0
 		pivot.position.y = TRIPO_HALF.y * s       # центр модели: ножки стоят на нулевом уровне
 		pivot.add_child(mi)
-		muzzle.position = Vector3(0, 0.27 * s, TRIPO_HALF.x * s + 0.02)
-		pitch_scale = 0.0
+		var body := mi.find_child("Body", true, false) as MeshInstance3D
+		body.material_override = Assets.tripo_material()
+		body.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		_skel = mi.get_node("Skeleton3D")
+		_bone_turret = _skel.find_bone("turret")
+		_bone_gun = _skel.find_bone("gun")
+		_gun_rest = _skel.get_bone_rest(_bone_gun).origin
+		# дуло привязано к кости орудия и следует за наклоном и откатом
+		var att := BoneAttachment3D.new()
+		att.bone_name = "gun"
+		_skel.add_child(att)
+		var tip := Marker3D.new()
+		tip.position = Vector3(0.44, 0.0, -0.03)
+		att.add_child(tip)
+		muzzle.free()
+		muzzle = tip
+		pitch_scale = 1.0
 		cam_back = 1.15
 		cam_up = 0.85
 	else:   # запасной вариант без модели
@@ -239,6 +261,10 @@ func _build_flame(m: Array) -> void:
 
 ## Поворачивает модель. Свою турель в FPS ставим точно по прицелу (без сглаживания).
 func aim(yaw: float, p: float) -> void:
+	if _skel != null:   # скелетная модель: вращаем кости, а не узлы
+		_skel.set_bone_pose_rotation(_bone_turret, Quaternion(Vector3.UP, yaw))
+		_skel.set_bone_pose_rotation(_bone_gun, Quaternion(Vector3(0, 0, 1), clampf(p, -0.6, 1.0)))
+		return
 	head.rotation.y = yaw
 	pivot.rotation.x = -p * pitch_scale
 
@@ -253,6 +279,9 @@ func spin_up() -> void:
 
 func _process(delta: float) -> void:
 	_recoil = maxf(0.0, _recoil - delta * 8.0)
+	if _skel != null:
+		_skel.set_bone_pose_position(_bone_gun, _gun_rest + Vector3(-0.09 * _recoil, 0, 0))
+		return
 	pivot.position.z = base_z - _recoil * 0.12
 	if spinner != null:
 		_spin = maxf(0.0, _spin - delta * 40.0)
