@@ -1,0 +1,1 @@
+﻿Images generated with StableDiffusion XL (sd_xl_base_1.0) via SwarmUI for this project (post-apocalyptic set).
