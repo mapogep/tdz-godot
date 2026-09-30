@@ -1,4 +1,4 @@
-﻿extends SceneTree
+extends SceneTree
 var frame := 0
 var views := []
 var model: Node3D
@@ -13,9 +13,11 @@ func _init() -> void:
 	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR; env.environment.ambient_light_color = Color(1,1,1)
 	root.add_child(env)
 	model = load("res://assets/models/%s.glb" % name).instantiate(); root.add_child(model)
-	var vm := StandardMaterial3D.new(); vm.vertex_color_use_as_albedo = true; vm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	for m: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false): m.material_override = vm
-	cam = Camera3D.new(); cam.projection = Camera3D.PROJECTION_ORTHOGONAL; cam.size = 1.2; root.add_child(cam); cam.current = true
+	for m: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
+		var mat = m.mesh.surface_get_material(0).duplicate()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.material_override = mat
+	cam = Camera3D.new(); cam.projection = Camera3D.PROJECTION_ORTHOGONAL; cam.size = 2.4; root.add_child(cam); cam.current = true
 	views = [["front", Vector3(0,0,3), Vector3.UP], ["side", Vector3(3,0,0), Vector3.UP], ["top", Vector3(0,3,0), Vector3(0,0,-1)]]
 	get_root().set_meta("n", name)
 func _process(_d: float) -> bool:
@@ -27,7 +29,7 @@ func _process(_d: float) -> bool:
 			var img := get_root().get_viewport().get_texture().get_image()
 			# сетка через 0.1 м
 			for k in range(-6, 7):
-				var p := int(round(img.get_width() * 0.5 + k * 0.1 * img.get_width() / 1.2))
+				var p := int(round(img.get_width() * 0.5 + k * 0.2 * img.get_width() / 2.4))
 				for t in img.get_height():
 					if p >= 0 and p < img.get_width(): img.set_pixel(p, t, Color(1,0,0) if k == 0 else Color(0.3,0.3,0.3))
 					if p >= 0 and p < img.get_height(): img.set_pixel(t, p, Color(1,0,0) if k == 0 else Color(0.3,0.3,0.3))

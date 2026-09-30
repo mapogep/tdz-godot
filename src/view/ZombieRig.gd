@@ -290,25 +290,34 @@ func _apply_emission() -> void:
 		m.emission_energy_multiplier = e
 
 
-## Сцена zombie_rigged.tscn (собрана tools/rig_models.gd): скелет из 16 костей, автоматические веса, анимации walk/attack/idle.
-## Исходная модель смотрит в -Z, поэтому корень поворачиваем на 180°.
+## Обычный и толстый зомби — zombie_rigged.tscn (модель Tripo), быстрый — одна из пяти «девушек» (girl_rigged.scn + текстура
+## girl_A/B/green/blue/red). Скелет из 16 костей, анимации walk/attack/idle (tools/rig_models.gd, tools/bake_models.gd).
+## Исходные модели смотрят в -Z, поэтому корень поворачиваем на 180°; ступни на нулевом уровне зашиты в сцену.
 func _build_rigged() -> bool:
-	if not ResourceLoader.exists("res://assets/models/zombie_rigged.tscn"):
-		return false
 	var zc: Dictionary = Cfg.ZOMBIES[type]
 	var s: float = zc["scale"]
-	var k: float = float(zc["height"]) / 0.946 * 0.98     # рост модели 0.946 → высота из Cfg
-	_skel_root = (load("res://assets/models/zombie_rigged.tscn") as PackedScene).instantiate()
+	var girl := type == "fast" and ResourceLoader.exists("res://assets/models/girl_rigged.scn")
+	var path := "res://assets/models/girl_rigged.scn" if girl else "res://assets/models/zombie_rigged.tscn"
+	if not ResourceLoader.exists(path):
+		return false
+	_skel_root = (load(path) as PackedScene).instantiate()
+	var rig_h: float = float(_skel_root.get_meta("rig_height", 0.946))
+	var k: float = (1.72 if girl else float(zc["height"])) / rig_h * 0.98
 	_skel_root.rotation.y = PI
 	_skel_root.scale = Vector3.ONE * k
-	_skel_root.position.y = 0.455 * k
 	add_child(_skel_root)
 	_anim = _skel_root.get_node("AnimationPlayer")
 	var body := _skel_root.find_child("Body", true, false) as MeshInstance3D
-	var mat := Assets.tripo_material()
+	var mat: StandardMaterial3D
+	if girl:
+		mat = Assets.model_material("girl_" + ["A", "B", "green", "blue", "red"][randi() % 5])
+	else:
+		mat = Assets.tripo_material()
 	body.material_override = mat
 	body.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	if type == "fat":
+	if girl:
+		scale = Vector3.ONE
+	elif type == "fat":
 		scale = Vector3(s * 1.05, s, s * 1.05)
 		mat.albedo_color = mat.albedo_color * Color(0.72, 0.85, 0.6)
 	elif type == "fast":
@@ -317,10 +326,9 @@ func _build_rigged() -> bool:
 	else:
 		scale = Vector3.ONE
 	_mats = [mat]
-	top_y = float(zc["height"]) * (s if type != "normal" else 1.0) + 0.15
+	top_y = (1.72 if girl else float(zc["height"]) * (s if type != "normal" else 1.0)) + 0.15
 	_set_mode("walk")
 	return true
-
 
 func _set_mode(m: String) -> void:
 	if m == _mode:

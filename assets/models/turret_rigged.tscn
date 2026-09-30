@@ -46,9 +46,9 @@ _data = {
 &"fire": SubResource("Animation_py33f")
 }
 
-[node name="TurretRigged" type="Node3D" unique_id=155132891]
+[node name="TurretRigged" type="Node3D" unique_id=1527908017]
 
-[node name="Skeleton3D" type="Skeleton3D" parent="." unique_id=248187292]
+[node name="Skeleton3D" type="Skeleton3D" parent="." unique_id=1461345631]
 bones/0/name = "root"
 bones/0/parent = -1
 bones/0/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.455, 0)
@@ -71,12 +71,12 @@ bones/2/position = Vector3(0, 0.27, -0.25)
 bones/2/rotation = Quaternion(0, 0, 0, 1)
 bones/2/scale = Vector3(1, 1, 1)
 
-[node name="Body" type="MeshInstance3D" parent="Skeleton3D" unique_id=446723583]
+[node name="Body" type="MeshInstance3D" parent="Skeleton3D" unique_id=643650539]
 material_override = SubResource("StandardMaterial3D_ds616")
 custom_aabb = AABB(-0.8, -0.6, -0.8, 1.6, 1.4, 1.6)
 mesh = SubResource("ArrayMesh_wrbek")
 skin = SubResource("Skin_l3u45")
 skeleton = NodePath("..")
 
-[node name="AnimationPlayer" type="AnimationPlayer" parent="." unique_id=1465736323]
+[node name="AnimationPlayer" type="AnimationPlayer" parent="." unique_id=643565723]
 libraries/ = SubResource("AnimationLibrary_xao34")

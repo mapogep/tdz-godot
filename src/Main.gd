@@ -380,7 +380,7 @@ func _setup_scenario(name: String) -> void:
 		"battle":
 			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 8; sim.turret_stock = 8],
 				[5, build], [10, func() -> void: _on_command(1, {"t": "startWave"})],
-				[12, func() -> void: cam_rig.focus_target = Vector3(9, 0, 15); cam_rig.dist_target = 9.0]]
+				[12, func() -> void: cam_rig.focus_target = Vector3(9, 0, 14); cam_rig.dist_target = 7.5]]
 		"free", "free_melee":
 			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 8; sim.turret_stock = 8],
 				[5, build], [10, func() -> void: _on_command(1, {"t": "startWave"})],

@@ -133,6 +133,15 @@ static func save_scene(root: Node, path: String) -> void:
 	print("saved ", path, " -> ", error_string(err))
 
 
+## То же, что save_scene, но в компактном бинарном .scn.
+static func save_scene_bin(root: Node, path: String) -> void:
+	set_owner_rec(root, root)
+	var ps := PackedScene.new()
+	ps.pack(root)
+	var err := ResourceSaver.save(ps, path)
+	print("saved ", path, " -> ", error_string(err))
+
+
 static func rot_track(anim: Animation, bone: String, fn: Callable, steps: int) -> void:
 	var t := anim.add_track(Animation.TYPE_ROTATION_3D)
 	anim.track_set_path(t, "Skeleton3D:" + bone)
@@ -219,6 +228,8 @@ static func build_zombie() -> void:
 	mi.custom_aabb = AABB(Vector3(-0.6, -0.6, -0.6), Vector3(1.2, 1.2, 1.2))
 	sk.add_child(mi)
 	mi.skeleton = NodePath("..")
+	sk.position.y = 0.455        # ступни на нулевом уровне
+	root.set_meta("rig_height", 0.946)
 
 	var ap := AnimationPlayer.new()
 	ap.name = "AnimationPlayer"
@@ -233,7 +244,7 @@ static func build_zombie() -> void:
 
 
 ## Шаркающая походка: ноги (правая подволакивается), руки вытянуты вперёд, корпус наклонён, голова свесилась.
-static func _zombie_walk() -> Animation:
+static func _zombie_walk(hips_rest: Vector3 = Vector3.ZERO, bob_scale: float = 1.0) -> Animation:
 	var a := Animation.new()
 	a.length = 1.0
 	a.loop_mode = Animation.LOOP_LINEAR
@@ -251,7 +262,9 @@ static func _zombie_walk() -> Animation:
 	rot_track(a, "forearm_L", func(t: float) -> Vector3: return Vector3(0.3 + 0.08 * sin(t), 0, 0), N)
 	rot_track(a, "upperarm_R", func(t: float) -> Vector3: return Vector3(1.05 - 0.12 * sin(t), 0, 0.06), N)
 	rot_track(a, "forearm_R", func(t: float) -> Vector3: return Vector3(0.4 - 0.08 * sin(t), 0, 0), N)
-	pos_track(a, "hips", Z_BONES[1]["pos"] - Z_BONES[0]["pos"], func(t: float) -> Vector3: return Vector3(0.012 * sin(t), 0.02 * absf(sin(t)), 0), N)
+	if hips_rest == Vector3.ZERO:
+		hips_rest = Z_BONES[1]["pos"] - Z_BONES[0]["pos"]
+	pos_track(a, "hips", hips_rest, func(t: float) -> Vector3: return Vector3(0.012 * sin(t), 0.02 * absf(sin(t)), 0) * bob_scale, N)
 	return a
 
 

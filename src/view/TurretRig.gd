@@ -94,7 +94,7 @@ func _build_base() -> Array:
 	var steel := _mat(Color("6b6053"), 0.55, 0.6)
 	var dark := _mat(Color("2b2723"), 0.5, 0.7)
 	var accent_m := _mat(accent, 0.4, 0.35, accent, 0.6)
-	if weapon != "gun":
+	if not _own_base():
 		_cyl(0.46, 0.5, 0.22, dark, Vector3(0, 0.11, 0), false, null, 20)
 	var ring := MeshInstance3D.new()
 	var tor := TorusMesh.new()
@@ -106,7 +106,7 @@ func _build_base() -> Array:
 	ring.material_override = accent_m
 	ring.position = Vector3(0, 0.24, 0)
 	add_child(ring)
-	if weapon != "gun":   # у базовой турели собственные ножки — стойка не нужна
+	if not _own_base():   # у моделей собственное основание — стойка не нужна
 		_cyl(0.22, 0.32, 0.7, steel, Vector3(0, 0.58, 0), false, null, 16)
 	# точки-индикаторы уровня по кругу основания
 	for i in level:
@@ -123,11 +123,14 @@ func _build() -> void:
 	head.add_child(pivot)
 	muzzle = Marker3D.new()
 	pivot.add_child(muzzle)
-	match weapon:
-		"machinegun": _build_mg(m)
-		"rocket": _build_rocket(m)
-		"flame": _build_flame(m)
-		_: _build_gun(m)
+	if _rigged_ok():
+		_build_rigged()
+	else:
+		match weapon:
+			"machinegun": _build_mg(m)
+			"rocket": _build_rocket(m)
+			"flame": _build_flame(m)
+			_: _build_gun(m)
 	base_z = pivot.position.z
 
 
@@ -137,9 +140,68 @@ func _build() -> void:
 const TRIPO_HALF := Vector3(0.49, 0.46, 0.40)   # половинные размеры исходной модели
 
 var _skel: Skeleton3D
+var _gun_axis := Vector3(0, 0, 1)         # ось наклона орудия (в системе модели)
+var _recoil_dir := Vector3(-1, 0, 0)        # направление отката (в системе модели)
+var _recoil_amt := 0.09
+var _pitch_min := -0.6
+var _pitch_max := 1.0
 var _bone_turret := -1
 var _bone_gun := -1
 var _gun_rest := Vector3.ZERO
+
+
+## Готовые модели оружия (tools/bake_models.gd): сцена со скелетом root / turret (yaw) / gun (pitch, отдача).
+const RIGGED := {
+	"machinegun": {"scene": "machinegun", "tex": "turret_machinegun", "scale": 0.62, "recoil": 0.07, "cam_back": 1.0, "cam_up": 0.6},
+	"rocket": {"scene": "artillery", "tex": "turret_artillery", "scale": 0.62, "recoil": 0.12, "cam_back": 1.35, "cam_up": 0.72},
+	"flame": {"scene": "flamethrower", "tex": "turret_flamethrower", "scale": 0.6, "recoil": 0.0, "cam_back": 1.4, "cam_up": 0.78},
+}
+
+
+func _rigged_ok() -> bool:
+	return RIGGED.has(weapon) and ResourceLoader.exists("res://assets/models/%s_rigged.scn" % RIGGED[weapon]["scene"])
+
+
+func _own_base() -> bool:
+	return weapon == "gun" or _rigged_ok()
+
+
+func _build_rigged() -> void:
+	var cfg: Dictionary = RIGGED[weapon]
+	var sc := (load("res://assets/models/%s_rigged.scn" % cfg["scene"]) as PackedScene).instantiate() as Node3D
+	var s: float = float(cfg["scale"]) * (1.0 + level * 0.012)
+	sc.rotation.y = -float(sc.get_meta("fwd_angle"))       # ствол модели → +Z
+	sc.scale = Vector3.ONE * s
+	var mh: float = float(sc.get_meta("pivot_y")) * s      # высота ствола над основанием
+	head.position.y = 0.0
+	pivot.position.y = mh
+	sc.position.y = -mh                                    # основание — на нулевом уровне
+	pivot.add_child(sc)
+	var body := sc.find_child("Body", true, false) as MeshInstance3D
+	body.material_override = Assets.model_material(str(cfg["tex"]))
+	body.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	_skel = sc.get_node("Skeleton3D")
+	_bone_turret = _skel.find_bone("turret")
+	_bone_gun = _skel.find_bone("gun")
+	_gun_rest = _skel.get_bone_rest(_bone_gun).origin
+	_gun_axis = sc.get_meta("gun_axis")
+	_recoil_dir = -(sc.get_meta("fwd") as Vector3)
+	_recoil_amt = float(cfg["recoil"])
+	_pitch_min = -0.2
+	_pitch_max = 0.4
+	# дуло привязано к кости орудия (следует за наклоном и откатом)
+	var att := BoneAttachment3D.new()
+	att.bone_name = "gun"
+	_skel.add_child(att)
+	var tip := Marker3D.new()
+	var tm: Vector3 = sc.get_meta("tip")
+	tip.position = Vector3(tm.x, 0.0, tm.z)
+	att.add_child(tip)
+	muzzle.free()
+	muzzle = tip
+	pitch_scale = 1.0
+	cam_back = float(cfg["cam_back"])
+	cam_up = float(cfg["cam_up"])
 
 
 func _build_gun(_m: Array) -> void:
@@ -263,7 +325,7 @@ func _build_flame(m: Array) -> void:
 func aim(yaw: float, p: float) -> void:
 	if _skel != null:   # скелетная модель: вращаем кости, а не узлы
 		_skel.set_bone_pose_rotation(_bone_turret, Quaternion(Vector3.UP, yaw))
-		_skel.set_bone_pose_rotation(_bone_gun, Quaternion(Vector3(0, 0, 1), clampf(p, -0.6, 1.0)))
+		_skel.set_bone_pose_rotation(_bone_gun, Quaternion(_gun_axis, clampf(p, _pitch_min, _pitch_max)))
 		return
 	head.rotation.y = yaw
 	pivot.rotation.x = -p * pitch_scale
@@ -280,7 +342,7 @@ func spin_up() -> void:
 func _process(delta: float) -> void:
 	_recoil = maxf(0.0, _recoil - delta * 8.0)
 	if _skel != null:
-		_skel.set_bone_pose_position(_bone_gun, _gun_rest + Vector3(-0.09 * _recoil, 0, 0))
+		_skel.set_bone_pose_position(_bone_gun, _gun_rest + _recoil_dir * (_recoil_amt * _recoil))
 		return
 	pivot.position.z = base_z - _recoil * 0.12
 	if spinner != null:

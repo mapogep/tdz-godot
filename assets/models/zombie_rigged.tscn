@@ -298,9 +298,11 @@ _data = {
 &"walk": SubResource("Animation_bx4xf")
 }
 
-[node name="ZombieRigged" type="Node3D" unique_id=1057918842]
+[node name="ZombieRigged" type="Node3D" unique_id=41916345]
+metadata/rig_height = 0.946
 
-[node name="Skeleton3D" type="Skeleton3D" parent="." unique_id=169890844]
+[node name="Skeleton3D" type="Skeleton3D" parent="." unique_id=250034166]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.455, 0)
 bones/0/name = "root"
 bones/0/parent = -1
 bones/0/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.455, 0)
@@ -414,12 +416,12 @@ bones/15/position = Vector3(0, -0.2, 0.02)
 bones/15/rotation = Quaternion(0, 0, 0, 1)
 bones/15/scale = Vector3(1, 1, 1)
 
-[node name="Body" type="MeshInstance3D" parent="Skeleton3D" unique_id=791202464]
+[node name="Body" type="MeshInstance3D" parent="Skeleton3D" unique_id=1034326161]
 material_override = SubResource("StandardMaterial3D_i4iyx")
 custom_aabb = AABB(-0.6, -0.6, -0.6, 1.2, 1.2, 1.2)
 mesh = SubResource("ArrayMesh_ogdtk")
 skin = SubResource("Skin_gscq6")
 skeleton = NodePath("..")
 
-[node name="AnimationPlayer" type="AnimationPlayer" parent="." unique_id=2129638872]
+[node name="AnimationPlayer" type="AnimationPlayer" parent="." unique_id=911276493]
 libraries/ = SubResource("AnimationLibrary_ehq05")

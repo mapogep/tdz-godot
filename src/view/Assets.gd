@@ -197,3 +197,30 @@ static func tripo_material() -> StandardMaterial3D:
 	m.emission = Color(1.0, 0.25, 0.08)
 	m.emission_energy_multiplier = 0.0
 	return m
+
+
+static var _model_mats: Dictionary = {}
+
+
+## Запечённый меш (tools/bake_models.gd): с нормалями, низ на нуле, центр по XZ в нуле.
+static func baked_mesh(n: String) -> Mesh:
+	var p := "res://assets/models/baked/%s.res" % n
+	return load(p) as Mesh if ResourceLoader.exists(p) else null
+
+
+## Материал с текстурой модели (assets/tex/models/<n>.jpg). shared=true — один общий (для MultiMesh),
+## иначе новый экземпляр (вспышки/горение, окраска типа).
+static func model_material(n: String, shared: bool = false, tint: Color = Color(0.9, 0.88, 0.84)) -> StandardMaterial3D:
+	if shared and _model_mats.has(n):
+		return _model_mats[n]
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = tex("res://assets/tex/models/%s.jpg" % n)
+	m.albedo_color = tint
+	m.roughness = 0.82
+	m.metallic = 0.05
+	m.emission_enabled = true
+	m.emission = Color(1.0, 0.25, 0.08)
+	m.emission_energy_multiplier = 0.0
+	if shared:
+		_model_mats[n] = m
+	return m

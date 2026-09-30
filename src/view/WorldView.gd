@@ -42,6 +42,7 @@ var free_pitch := 0.0
 var player_views: Dictionary = {}     # pid -> Dictionary
 
 var _walls_mm: MultiMeshInstance3D
+var _walls_mm2: MultiMeshInstance3D
 var _wall_keys: Array = []
 var _wall_sig := ""
 var _time := 0.0
@@ -68,6 +69,7 @@ func setup(p_nav: NavSim, p_quality: int) -> void:
 	scenery = Scenery.new()
 	add_child(scenery)
 	scenery.build(nav, quality, fx._soft)
+	_build_props()
 	_build_ash()
 	_build_helpers()
 	_hp_mat_template = ShaderMaterial.new()
@@ -179,42 +181,142 @@ func _build_ground() -> void:
 	plane.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(plane)
 
-	# внешняя стена — кольцо бетонных блоков (MultiMesh)
-	var cells: Array = []
-	for y in nav.size:
-		for x in nav.size:
-			if nav.is_blocked(x, y):
-				cells.append(Vector2i(x, y))
-	var mm := MultiMesh.new()
-	mm.transform_format = MultiMesh.TRANSFORM_3D
-	var box := BoxMesh.new()
-	box.size = Vector3(1, 2, 1)
-	mm.mesh = box
-	mm.instance_count = cells.size()
-	for i in cells.size():
-		var w := NavSim.cell_to_world(cells[i])
-		mm.set_instance_transform(i, Transform3D(Basis.IDENTITY, Vector3(w.x, 1.0, w.y)))
-	var ring := MultiMeshInstance3D.new()
-	ring.multimesh = mm
-	ring.material_override = Assets.surface_material("res://assets/tex/concrete.jpg", 2.4, 0.8, 0.9, 0.9, 1.6, 0.0, 0.45)
-	ring.custom_aabb = AABB(Vector3(-2, 0, -2), Vector3(fs + 4, 3, fs + 4))
-	add_child(ring)
+	_build_ring()
 
 
 func _build_walls() -> void:
+	# стены игрока: бетонные блоки (иногда — бочка); MultiMesh на каждый вид
+	_walls_mm = _make_mm("concrete_block", WALL_CAP)
+	_walls_mm2 = _make_mm("barrel", WALL_CAP)
+
+
+func _make_mm(model: String, cap: int) -> MultiMeshInstance3D:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
-	var box := BoxMesh.new()
-	box.size = Vector3(0.96, Cfg.WALL_HEIGHT, 0.96)
-	mm.mesh = box
-	mm.instance_count = WALL_CAP
+	mm.mesh = Assets.baked_mesh(model)
+	mm.instance_count = cap
 	mm.visible_instance_count = 0
-	_walls_mm = MultiMeshInstance3D.new()
-	_walls_mm.multimesh = mm
-	_walls_mm.material_override = Assets.surface_material("res://assets/tex/scrap.jpg", 1.6, 0.9, 0.95, 0.75, 1.5, 0.2, 0.4)
-	_walls_mm.custom_aabb = AABB(Vector3(-2, 0, -2), Vector3(nav.field_size + 4, 3, nav.field_size + 4))
-	add_child(_walls_mm)
+	var inst := MultiMeshInstance3D.new()
+	inst.multimesh = mm
+	inst.material_override = Assets.model_material(model, true)
+	inst.custom_aabb = AABB(Vector3(-4, -1, -4), Vector3(nav.field_size + 8, 5, nav.field_size + 8))
+	add_child(inst)
+	return inst
 
+
+## Внешняя стена — ряд бочек (fence_barrels по 3 клетки + одиночные бочки на остатках), ворота остаются проёмами.
+func _build_ring() -> void:
+	var n := nav.size
+	var runs: Array = []      # [start Vector2i, dir Vector2i, length]
+	var add_run := func(sx: int, sy: int, dx: int, dy: int, length: int) -> void:
+		if length > 0:
+			runs.append([Vector2i(sx, sy), Vector2i(dx, dy), length])
+	# север и юг — целиком
+	add_run.call(0, 0, 1, 0, n)
+	add_run.call(0, n - 1, 1, 0, n)
+	# запад и восток — между углами, с разрывом на воротах
+	for x in [0, n - 1]:
+		var start := 1
+		for y in range(1, n - 1):
+			if not nav.is_blocked(x, y):
+				add_run.call(x, start, 0, 1, y - start)
+				start = y + 1
+		add_run.call(x, start, 0, 1, n - 1 - start)
+	var fence_xf: Array = []
+	var single_xf: Array = []
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4242
+	for r in runs:
+		var s: Vector2i = r[0]
+		var d: Vector2i = r[1]
+		var length: int = r[2]
+		var i := 0
+		while i < length:
+			var take := mini(3, length - i)
+			var c0 := NavSim.cell_to_world(s + d * i)
+			var c1 := NavSim.cell_to_world(s + d * (i + take - 1))
+			var mid := (c0 + c1) * 0.5
+			if take == 3:
+				# длинная ось модели — Z; вдоль X поворачиваем на 90°
+				var basis := Basis(Vector3.UP, PI / 2.0 if d.x != 0 else 0.0) * Basis.from_scale(Vector3.ONE * 0.9)
+				fence_xf.append(Transform3D(basis, Vector3(mid.x, 0.0, mid.y)))
+			else:
+				for k in take:
+					var c := NavSim.cell_to_world(s + d * (i + k))
+					var b2 := Basis(Vector3.UP, rng.randf() * TAU) * Basis.from_scale(Vector3.ONE * 0.92)
+					single_xf.append(Transform3D(b2, Vector3(c.x, 0.0, c.y)))
+			i += take
+	for pair in [["fence_barrels", fence_xf], ["barrel", single_xf]]:
+		var xfs: Array = pair[1]
+		if xfs.is_empty() or Assets.baked_mesh(pair[0]) == null:
+			continue
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = Assets.baked_mesh(pair[0])
+		mm.instance_count = xfs.size()
+		for j in xfs.size():
+			mm.set_instance_transform(j, xfs[j])
+		var mi := MultiMeshInstance3D.new()
+		mi.multimesh = mm
+		mi.material_override = Assets.model_material(pair[0], true)
+		mi.custom_aabb = AABB(Vector3(-3, -1, -3), Vector3(nav.field_size + 6, 4, nav.field_size + 6))
+		add_child(mi)
+
+
+## Реквизит вокруг поля: бочки поодиночке и группами, бетонные заграждения (fence_concrete) у дорог.
+func _build_props() -> void:
+	var fs := float(nav.field_size)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 9917
+	var barrels: Array = []
+	var fences: Array = []
+	var blocks: Array = []
+	var near_road := func(x: float, z: float) -> bool:
+		return absf(z - fs * 0.5) < 3.2 and (x < 0.5 or x > fs - 0.5)
+	# бочки группами по 2–4
+	for g in 26:
+		var cx := rng.randf_range(-16.0, fs + 16.0)
+		var cz := rng.randf_range(-16.0, fs + 16.0)
+		if cx > -2.5 and cx < fs + 2.5 and cz > -2.5 and cz < fs + 2.5:
+			continue
+		if near_road.call(cx, cz):
+			continue
+		for k in rng.randi_range(2, 4):
+			var x := cx + rng.randf_range(-1.1, 1.1)
+			var z := cz + rng.randf_range(-1.1, 1.1)
+			var tilt := rng.randf() < 0.12
+			var b := Basis(Vector3.UP, rng.randf() * TAU) * Basis.from_scale(Vector3.ONE * rng.randf_range(0.5, 0.62))
+			if tilt:
+				b = Basis(Vector3.UP, rng.randf() * TAU) * Basis(Vector3.RIGHT, PI / 2.0) * Basis.from_scale(Vector3.ONE * 0.55)
+			barrels.append(Transform3D(b, Vector3(x, 0.32 if tilt else 0.0, z)))
+	# бетонные заграждения: пары у въездов и отдельные линии вдоль дороги
+	for side in [-1.0, 1.0]:
+		var x := -5.5 if side < 0 else fs + 5.5
+		for dz in [-2.4, 2.4]:
+			fences.append(Transform3D(Basis(Vector3.UP, rng.randf_range(-0.12, 0.12)) * Basis.from_scale(Vector3.ONE * 0.5), Vector3(x, 0.0, fs * 0.5 + dz * 1.6)))
+	for i in 10:
+		var a := rng.randf() * TAU
+		var r := rng.randf_range(12.0, 22.0)
+		var px := fs * 0.5 + cos(a) * (fs * 0.5 + r)
+		var pz := fs * 0.5 + sin(a) * (fs * 0.5 + r)
+		if near_road.call(px, pz):
+			continue
+		blocks.append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU) * Basis.from_scale(Vector3.ONE * 0.55), Vector3(px, 0.0, pz)))
+	for pair in [["barrel", barrels], ["fence_concrete", fences], ["concrete_block", blocks]]:
+		var xfs: Array = pair[1]
+		if xfs.is_empty() or Assets.baked_mesh(pair[0]) == null:
+			continue
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = Assets.baked_mesh(pair[0])
+		mm.instance_count = xfs.size()
+		for j in xfs.size():
+			mm.set_instance_transform(j, xfs[j])
+		var mi := MultiMeshInstance3D.new()
+		mi.multimesh = mm
+		mi.material_override = Assets.model_material(pair[0], true)
+		mi.custom_aabb = AABB(Vector3(-40, -2, -40), Vector3(fs + 80, 8, fs + 80))
+		add_child(mi)
 
 ## Пепел и пыль в воздухе над полем: медленно дрейфующие частицы.
 func _build_ash() -> void:
@@ -352,15 +454,35 @@ func set_walls(cells: Array) -> void:
 		return
 	_wall_sig = sig
 	_wall_keys = cells.duplicate()
-	var mm := _walls_mm.multimesh
 	var n := nav.size
-	var count := mini(cells.size(), WALL_CAP)
-	for i in count:
-		var k: int = cells[i]
-		var w := NavSim.cell_to_world(Vector2i(k % n, k / n))
-		mm.set_instance_transform(i, Transform3D(Basis.IDENTITY, Vector3(w.x, Cfg.WALL_HEIGHT / 2.0, w.y)))
-	mm.visible_instance_count = count
-
+	var set := {}
+	for k in cells:
+		set[int(k)] = true
+	var mm := _walls_mm.multimesh
+	var mm2 := _walls_mm2.multimesh
+	var c1 := 0
+	var c2 := 0
+	# блок 1.18×1.49×1.97 (длинная ось — Z) сжимается до клетки: 0.9 × 1.2 × 1.0; вдоль ряда стен поворачиваем
+	var block_scale := Vector3(0.764, Cfg.WALL_HEIGHT / 1.4914, 0.507)
+	for k in cells:
+		var x: int = int(k) % n
+		var y: int = int(k) / n
+		var w := NavSim.cell_to_world(Vector2i(x, y))
+		if (x * 7 + y * 13) % 5 == 0 and c2 < WALL_CAP:
+			# бочка (масштаб под высоту стены), случайный поворот
+			var ang := float((x * 31 + y * 17) % 628) / 100.0
+			var b := Basis(Vector3.UP, ang) * Basis.from_scale(Vector3.ONE * (Cfg.WALL_HEIGHT / 1.9785))
+			mm2.set_instance_transform(c2, Transform3D(b, Vector3(w.x, 0.0, w.y)))
+			c2 += 1
+		elif c1 < WALL_CAP:
+			var along_x := set.has(y * n + x - 1) or set.has(y * n + x + 1)
+			var along_z := set.has((y - 1) * n + x) or set.has((y + 1) * n + x)
+			var ang2 := PI / 2.0 if (along_x and not along_z) else 0.0
+			var b2 := Basis(Vector3.UP, ang2) * Basis.from_scale(block_scale)
+			mm.set_instance_transform(c1, Transform3D(b2, Vector3(w.x, 0.0, w.y)))
+			c1 += 1
+	mm.visible_instance_count = c1
+	mm2.visible_instance_count = c2
 
 func wall_at(cell: Vector2i) -> bool:
 	return _wall_keys.has(cell.y * nav.size + cell.x)
