@@ -589,6 +589,7 @@ static func auto_skeleton(verts: PackedVector3Array, idx: PackedInt32Array) -> D
 		else:
 			hands[-1] = [Vector3(-hr.x, hr.y, hr.z), hands[1][1], []]
 	var drops := {}
+	var hand_zone := {}
 	for side: int in [-1, 1]:
 		var suffix := "_L" if side < 0 else "_R"
 		var edge_q: int = sh_seg.x if side < 0 else sh_seg.y
@@ -599,6 +600,22 @@ static func auto_skeleton(verts: PackedVector3Array, idx: PackedInt32Array) -> D
 		var wrist := shoulder.lerp(hand, 0.84)
 		var elbow := shoulder.lerp(wrist, 0.5)
 		elbow.z = near_z.call(elbow)
+		# кончики пальцев: точка кисти по силуэту бывает выше реального конца руки (кисть касается бедра) —
+		# продлеваем предплечье вдоль руки до самых дальних вершин в узком цилиндре; иначе пальцы достаются ноге
+		# и при взмахе руки тянутся «палками»
+		var hdir := (hand - elbow).normalized()
+		var reach := PackedFloat32Array()
+		for v in verts:
+			if side * v.x <= 0.0:
+				continue
+			var rel := v - hand
+			var sp := rel.dot(hdir)
+			if sp > 0.0 and sp < H * 0.2 and (rel - hdir * sp).length() < H * 0.05:
+				reach.append(sp)
+		if reach.size() > 3:
+			reach.sort()
+			hand += hdir * reach[int(reach.size() * 0.95)]
+		hand_zone[side] = [shoulder.lerp(hand, 0.78), hand, hdir]
 		# ноги: первый отрезок от центральной щели на высоте бедра, колена и лодыжки
 		var leg_at := func(yy: float) -> Vector3:
 			var seg := sil.first_segment(sil.row(yy), c0, side, int(H * 0.045 / sil.cell))
@@ -631,6 +648,21 @@ static func auto_skeleton(verts: PackedVector3Array, idx: PackedInt32Array) -> D
 		drops[side] = atan2(absf(hand.x - shoulder.x), maxf(shoulder.y - hand.y, 0.01))
 	print("  H %.2f crotch %.2f neck %.2f shoulders %.2f drops %.2f %.2f" % [H, crotch / H, neck / H, sh_y / H, drops[-1], drops[1]])
 	_debug_image(sil, bones, segs)
+	# внешний край тела (корпус выше промежности, нога ниже) по строкам силуэта: всё, что в силуэте торчит дальше, —
+	# рука (кисть, пальцы); {сторона: {строка: столбец края}}
+	var body_edge := {}
+	var leg_w := int(H * 0.045 / sil.cell)
+	for side: int in [-1, 1]:
+		var edges := {}
+		for rr in range(sil.row(H * 0.05), sil.row(sh_y - H * 0.02)):
+			var seg: Vector2i
+			if (rr + 0.5) * sil.cell >= crotch:
+				seg = sil.segment(rr, c0)
+			else:
+				seg = sil.first_segment(rr, c0, side, leg_w)
+			if seg.x >= 0:
+				edges[rr] = seg.y if side > 0 else seg.x
+		body_edge[side] = edges
 	# строки силуэта, где рука отделена от корпуса: {сторона: {строка: [первый, последний столбец]}} — для весов кожи
 	var arm_rows := {}
 	for side: int in [-1, 1]:
@@ -639,7 +671,7 @@ static func auto_skeleton(verts: PackedVector3Array, idx: PackedInt32Array) -> D
 			rows[int(tr[0])] = tr[1]
 		arm_rows[side] = rows
 	return {"bones": bones, "segs": segs, "drop_l": drops[-1], "drop_r": drops[1], "height": H,
-		"arm_rows": arm_rows, "sil_cell": sil.cell, "sil_x0": sil.x0}
+		"arm_rows": arm_rows, "sil_cell": sil.cell, "sil_x0": sil.x0, "hand_zone": hand_zone, "body_edge": body_edge}
 
 ## Веса кожи. Кость — «капсула»: отрезок с радиусом, оценённым по самой модели (75-й перцентиль расстояний
 ## «своих» вершин; корпус толстый, рука тонкая). Вес 1/d⁴ от поверхности капсулы, а не от оси — иначе бока корпуса
@@ -651,7 +683,15 @@ static func auto_weights(verts: PackedVector3Array, rig: Dictionary) -> Array:
 		index[bones[i]["name"]] = i
 	var H: float = rig["height"]
 	var segs: Array = rig["segs"]
+	# ниже промежности вершина всегда принадлежит одной ноге (по знаку x) — иначе сомкнутые стопы получают веса
+	# обеих ног и при шаге между ними тянется перепонка
+	var crotch_y := INF
+	for b in rig["bones"]:
+		if b["name"] == "thigh_L":
+			crotch_y = (b["pos"] as Vector3).y
 	var side_of := func(v: Vector3) -> int:
+		if v.y < crotch_y - H * 0.03:
+			return 1 if v.x >= 0.0 else -1
 		return 0 if absf(v.x) < H * 0.02 else (1 if v.x > 0.0 else -1)
 	# радиусы капсул: для каждой вершины ближайший по оси отрезок → распределение расстояний по костям
 	var dists: Array = []
@@ -671,6 +711,7 @@ static func auto_weights(verts: PackedVector3Array, rig: Dictionary) -> Array:
 				best = i
 		if best >= 0:
 			dists[best].append(best_d)
+	var is_arm := func(name: String) -> bool: return name.begins_with("upperarm") or name.begins_with("forearm")
 	var radius := PackedFloat32Array()
 	for i in segs.size():
 		var arr: PackedFloat32Array = dists[i]
@@ -678,25 +719,34 @@ static func auto_weights(verts: PackedVector3Array, rig: Dictionary) -> Array:
 			radius.append(0.0)
 			continue
 		arr.sort()
-		radius.append(arr[int(arr.size() * 0.75)] * 0.85)
+		# у рук радиус по медиане (в «свои» вершины руки попадают и бока корпуса — 75-й перцентиль их бы захватил)
+		var arm_seg: bool = is_arm.call(str(segs[i][0]))
+		radius.append(arr[int(arr.size() * (0.5 if arm_seg else 0.75))] * (0.8 if arm_seg else 0.85))
 	# руки по силуэту: в строках, где рука отделена от корпуса, вершины внутри отрезка руки — только руке,
 	# снаружи — никогда руке (бока корпуса и волосы не тянутся за рукой)
 	var arm_rows: Dictionary = rig.get("arm_rows", {})
 	var cell: float = rig.get("sil_cell", 1.0)
 	var x0: float = rig.get("sil_x0", 0.0)
-	var is_arm := func(name: String) -> bool: return name.begins_with("upperarm") or name.begins_with("forearm")
 	var bi := PackedInt32Array()
 	var bw := PackedFloat32Array()
 	for v in verts:
 		var ws: Array = []
 		var vs: int = side_of.call(v)
 		var arm_mode := 0          # 0 — без ограничений, 1 — только рука своей стороны, -1 — без рук
-		if vs != 0 and arm_rows.has(vs):
+		var edges_all: Dictionary = rig.get("body_edge", {})
+		if vs != 0 and edges_all.has(vs):
 			var rr := int(floor(v.y / cell))
-			var rows: Dictionary = arm_rows[vs]
-			if rows.has(rr):
+			var q := int(floor((v.x - x0) / cell))
+			var edges: Dictionary = edges_all[vs]
+			var rows: Dictionary = arm_rows.get(vs, {})
+			if edges.has(rr):
+				var beyond: int = (q - int(edges[rr])) * vs
+				if beyond > 1:
+					arm_mode = 1                # за краем корпуса или ноги — только рука (кисть, пальцы)
+				elif beyond < -1 and rows.has(rr):
+					arm_mode = -1               # внутри корпуса в строке, где рука отделена, — руке не достаётся
+			elif rows.has(rr):
 				var seg: Vector2i = rows[rr]
-				var q := int(floor((v.x - x0) / cell))
 				arm_mode = 1 if (q >= seg.x - 1 and q <= seg.y + 1) else -1
 		for i in segs.size():
 			var sd: int = segs[i][3]
@@ -706,6 +756,8 @@ static func auto_weights(verts: PackedVector3Array, rig: Dictionary) -> Array:
 			if (arm_mode == 1 and not arm) or (arm_mode == -1 and arm):
 				continue
 			var d := maxf(seg_dist(v, segs[i][1], segs[i][2]) - radius[i], 0.0)
+			if arm and arm_mode == 0:
+				d = d * 1.4 + H * 0.01          # спорные вершины (бок корпуса у руки) — скорее корпусу
 			ws.append([index[segs[i][0]], 1.0 / pow(d + H * 0.012, 4.0)])
 		ws.sort_custom(func(a: Array, b: Array) -> bool: return a[1] > b[1])
 		var total := 0.0
@@ -853,6 +905,8 @@ func bake_humanoid(n: String, p: Dictionary) -> void:
 	var normals := smooth_normals(verts, d["idx"])
 	var s := simplify(verts, normals, d["uvs"], d["idx"], float(p["ratio"]))
 	var wts := auto_weights(verts, rig)
+	if OS.get_environment("RT_DEBUG") != "":
+		_debug_weights(verts, rig, wts)
 	var arrays := base_arrays(verts, normals, d["uvs"], s["idx"])
 	arrays[Mesh.ARRAY_BONES] = wts[0]
 	arrays[Mesh.ARRAY_WEIGHTS] = wts[1]
@@ -881,12 +935,22 @@ func bake_humanoid(n: String, p: Dictionary) -> void:
 		root.set_meta("rifle_pos", chest + Vector3(H * 0.07, -H * 0.06, -H * 0.16))
 	elif _anim_pack() != null:
 		# у громилы огромные руки висят вдоль тела — полный размах рук из пака сетка не выдерживает
-		var damp := {"upperarm_L": 0.55, "upperarm_R": 0.55, "forearm_L": 0.7, "forearm_R": 0.7} if n == "z_brute" else {}
+		# у моделей с руками вдоль тела (генератор сращивает кисти с бёдрами, плечи с боками) большой размах рук рвёт
+		# или растягивает сетку — ослабляем его; у ходока и броненосца руки отставлены (A-поза), им можно полный
+		var damp := {}
+		match n:
+			"z_fat", "z_boomer":
+				damp = {"upperarm_L": 0.4, "upperarm_R": 0.4, "forearm_L": 0.55, "forearm_R": 0.55}
+			"z_brute":
+				damp = {"upperarm_L": 0.25, "upperarm_R": 0.25, "forearm_L": 0.4, "forearm_R": 0.4}
 		var res: Array = rt.zombie_library(rig, ZOMBIE_WALKS.get(n, ["walk_a"]), damp)
 		ap.add_animation_library("", res[0])
 		root.set_meta("anims", res[1])
 	else:
 		ap.add_animation_library("", zombie_anims(rig["drop_l"], rig["drop_r"], hips, H))
+	get_root().add_child(root)
+	cut_stretched(root, s)
+	get_root().remove_child(root)
 	save_scene(root, OUT + n + ".scn")
 	root.free()
 	save_tex(d["image"], n, int(p["tex"]))
@@ -908,6 +972,8 @@ func bake_girl() -> void:
 	var normals := smooth_normals(verts, d["idx"])
 	var s := simplify(verts, normals, d["uvs"], d["idx"], 0.5)
 	var wts := auto_weights(verts, rig)
+	if OS.get_environment("RT_DEBUG") != "":
+		_debug_weights(verts, rig, wts)
 	var arrays := base_arrays(verts, normals, d["uvs"], s["idx"])
 	arrays[Mesh.ARRAY_BONES] = wts[0]
 	arrays[Mesh.ARRAY_WEIGHTS] = wts[1]
@@ -929,11 +995,14 @@ func bake_girl() -> void:
 	root.add_child(ap)
 	if _anim_pack() != null:
 		# у девушки руки прижаты к телу и рукава короткие: размах рук при беге уменьшаем
-		var res: Array = rt.zombie_library(rig, ZOMBIE_WALKS["girl"], {"upperarm_L": 0.5, "upperarm_R": 0.5, "forearm_L": 0.6, "forearm_R": 0.6})
+		var res: Array = rt.zombie_library(rig, ZOMBIE_WALKS["girl"], {"upperarm_L": 0.15, "upperarm_R": 0.15, "forearm_L": 0.3, "forearm_R": 0.3})
 		ap.add_animation_library("", res[0])
 		root.set_meta("anims", res[1])
 	else:
 		ap.add_animation_library("", zombie_anims(rig["drop_l"], rig["drop_r"], rig["bones"][1]["pos"], H))
+	get_root().add_child(root)
+	cut_stretched(root, s)
+	get_root().remove_child(root)
 	save_scene(root, OUT + "girl.scn")
 	root.free()
 	for g in GIRLS:
@@ -1034,3 +1103,213 @@ static func _debug_image(sil: Silhouette, bones: Array, segs: Array) -> void:
 			img.set_pixel(q, rr, Color(1, 0.2, 0.1) if s[3] < 0 else (Color(0.1, 0.5, 1) if s[3] > 0 else Color(0.1, 0.9, 0.2)))
 	img.resize(sil.cols * 3, sil.rows * 3, Image.INTERPOLATE_NEAREST)
 	img.save_png(ProjectSettings.globalize_path("res://shots/rig_%s.png" % debug_name))
+
+
+## Отладка весов: вершины по доминирующей кости в крайних по X областях (там, где кисти).
+static func _debug_weights(verts: PackedVector3Array, rig: Dictionary, wts: Array) -> void:
+	var bi: PackedInt32Array = wts[0]
+	var bw: PackedFloat32Array = wts[1]
+	var names: Array = []
+	for b in rig["bones"]:
+		names.append(b["name"])
+	var bad := {}
+	var H: float = rig["height"]
+	for i in verts.size():
+		var v := verts[i]
+		var s := bw[i * 4] + bw[i * 4 + 1] + bw[i * 4 + 2] + bw[i * 4 + 3]
+		if s < 0.99 or is_nan(s):
+			bad["sum!=1"] = int(bad.get("sum!=1", 0)) + 1
+		if absf(v.x) > H * 0.22:
+			var nm: String = names[bi[i * 4]]
+			bad[nm] = int(bad.get(nm, 0)) + 1
+	print("  weights at |x|>0.22H: ", bad, " hand_zone ", rig.get("hand_zone", {}))
+
+
+## Генератор склеивает касающиеся поверхности в одну сетку (кисть с бедром, локоть с поясом, стопы между собой).
+## Такие треугольники-«перепонки» соединяют части тела, которые двигаются по-разному, и при движении тянутся палками —
+## вырезаем их (на месте касания дырка не видна). Удаляем треугольник, если его вершины принадлежат костям, которые
+## в теле не соединены: рука — нога, рука — другая рука.
+static func cut_webs(s: Dictionary, wts: Array, rig: Dictionary, verts: PackedVector3Array) -> void:
+	var bi: PackedInt32Array = wts[0]
+	var bw: PackedFloat32Array = wts[1]
+	var names: Array = []
+	var chest_y := 0.0
+	for b in rig["bones"]:
+		names.append(b["name"])
+		if b["name"] == "chest":
+			chest_y = (b["pos"] as Vector3).y
+	var n := bw.size() / 4
+	var dom := PackedInt32Array()
+	dom.resize(n)
+	for i in n:
+		var best := 0
+		for k in range(1, 4):
+			if bw[i * 4 + k] > bw[i * 4 + best]:
+				best = k
+		dom[i] = bi[i * 4 + best]
+	# семейство кости: 0 корпус, 1/2 рука L/R, 3/4 нога L/R; is_fore — предплечье
+	var fam := PackedInt32Array()
+	var fore := PackedByteArray()
+	for nm: String in names:
+		var f := 0
+		if nm.begins_with("upperarm") or nm.begins_with("forearm"):
+			f = 1 if nm.ends_with("_L") else 2
+		elif nm.begins_with("thigh") or nm.begins_with("shin") or nm.begins_with("foot"):
+			f = 3 if nm.ends_with("_L") else 4
+		fam.append(f)
+		fore.append(1 if nm.begins_with("forearm") else 0)
+	var hips := names.find("hips")
+	var spine := names.find("spine")
+	var bad := func(a: int, b: int) -> bool:
+		var ba := dom[a]
+		var bb := dom[b]
+		var fa := fam[ba]
+		var fb := fam[bb]
+		if fa == fb:
+			return false
+		# рука — нога, рука — другая рука; остальные «склейки» режет cut_stretched по реальным анимациям
+		return (fa in [1, 2] and fb != 0) or (fb in [1, 2] and fa != 0)
+	var filt := func(idx: PackedInt32Array) -> PackedInt32Array:
+		var out := PackedInt32Array()
+		for t in range(0, idx.size(), 3):
+			var a := idx[t]
+			var b := idx[t + 1]
+			var c := idx[t + 2]
+			if bad.call(a, b) or bad.call(b, c) or bad.call(a, c):
+				continue
+			out.append_array(PackedInt32Array([a, b, c]))
+		return out
+	var before: int = (s["idx"] as PackedInt32Array).size() / 3
+	s["idx"] = filt.call(s["idx"])
+	var lods: Dictionary = s["lods"]
+	for key in lods.keys():
+		lods[key] = filt.call(lods[key])
+	print("  cut webs: %d triangles" % (before - (s["idx"] as PackedInt32Array).size() / 3))
+
+
+## «Склейки»: генератор сращивает касающиеся части тела (кисть с бедром, обувь между собой). Рёбра «кисть/предплечье —
+## чужая кость» и «стопа/голень — другая нога», которые в анимациях растягиваются больше чем в stretch раз (и длиннее
+## 0,1 высоты), — это «палки» на концах рук. Чиним в два прохода: сначала вершины руки на таких рёбрах отдаём кости
+## соседа (место склейки остаётся на теле, тело не рвётся, у кисти пропадает лишь тонкий слой), затем оставшиеся
+## растянутые треугольники удаляем. Скиннинг — на CPU по позам скелета (12 кадров каждой анимации). Сцена — в дереве.
+func cut_stretched(root: Node3D, s: Dictionary, stretch: float = 4.0) -> void:
+	var sk: Skeleton3D = root.get_node("Skeleton3D")
+	var mi := root.find_child("Body", true, false) as MeshInstance3D
+	var ap: AnimationPlayer = root.get_node("AnimationPlayer")
+	var arr := (mi.mesh as ArrayMesh).surface_get_arrays(0)
+	var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	var bones: PackedInt32Array = arr[Mesh.ARRAY_BONES]
+	var w: PackedFloat32Array = arr[Mesh.ARRAY_WEIGHTS]
+	var H: float = float(root.get_meta("rig_height", 2.0))
+	var skin := mi.skin
+	var names: Array = []
+	var bind_bone: Array = []
+	for b in skin.get_bind_count():
+		names.append(skin.get_bind_name(b))
+		bind_bone.append(sk.find_bone(skin.get_bind_name(b)))
+	var dom_of := func(i: int) -> int:
+		var best := 0
+		for k in range(1, 4):
+			if w[i * 4 + k] > w[i * 4 + best]:
+				best = k
+		return bones[i * 4 + best]
+	var arm_of := func(b: int) -> String:
+		var nm: String = names[b]
+		return nm.right(1) if (nm.begins_with("forearm") or nm.begins_with("upperarm")) else ""
+	var fore := func(b: int) -> bool: return str(names[b]).begins_with("forearm")
+	var leg_of := func(b: int) -> String:
+		var nm: String = names[b]
+		return nm.right(1) if (nm.begins_with("shin") or nm.begins_with("foot")) else ""
+	# кандидаты: рёбра базовой сетки и LOD между «чужими» частями
+	var lists: Array = [s["idx"]]
+	for key in (s["lods"] as Dictionary).keys():
+		lists.append(s["lods"][key])
+	var candidates := func() -> Dictionary:
+		var out := {}
+		for li: PackedInt32Array in lists:
+			for t in range(0, li.size(), 3):
+				for e in 3:
+					var a := li[t + e]
+					var c := li[t + (e + 1) % 3]
+					var da: int = dom_of.call(a)
+					var dc: int = dom_of.call(c)
+					var la: String = leg_of.call(da)
+					var lc: String = leg_of.call(dc)
+					var legs_web := la != "" and lc != "" and la != lc
+					if not legs_web:
+						if not (fore.call(da) or fore.call(dc)):
+							continue
+						if arm_of.call(da) == arm_of.call(dc):
+							continue
+					out[Vector2i(mini(a, c), maxi(a, c))] = true
+		return out
+	var find_bad := func(edges: Dictionary) -> Dictionary:
+		var bad := {}
+		for an in ap.get_animation_list():
+			ap.play(an)
+			var length := ap.current_animation_length
+			for f in 12:
+				ap.seek(length * f / 12.0, true)
+				var mats: Array = []
+				for b in skin.get_bind_count():
+					mats.append(sk.get_bone_global_pose(bind_bone[b]) * skin.get_bind_pose(b))
+				for e: Vector2i in edges.keys():
+					if bad.has(e):
+						continue
+					var pa := Vector3.ZERO
+					var pc := Vector3.ZERO
+					for k in 4:
+						if w[e.x * 4 + k] > 0.0:
+							pa += (mats[bones[e.x * 4 + k]] as Transform3D) * verts[e.x] * w[e.x * 4 + k]
+						if w[e.y * 4 + k] > 0.0:
+							pc += (mats[bones[e.y * 4 + k]] as Transform3D) * verts[e.y] * w[e.y * 4 + k]
+					var q := pa.distance_to(pc)
+					if q > H * 0.1 and q > verts[e.x].distance_to(verts[e.y]) * stretch:
+						bad[e] = true
+		ap.stop()
+		return bad
+	# проход 1: вершины руки (кисти) на растянутых рёбрах — кости соседа по телу
+	var bad1: Dictionary = find_bad.call(candidates.call())
+	var moved := 0
+	for e: Vector2i in bad1.keys():
+		var da: int = dom_of.call(e.x)
+		var dc: int = dom_of.call(e.y)
+		var src := -1
+		var dst := -1
+		if fore.call(da) and not fore.call(dc) and arm_of.call(dc) == "":
+			src = e.y
+			dst = e.x
+		elif fore.call(dc) and not fore.call(da) and arm_of.call(da) == "":
+			src = e.x
+			dst = e.y
+		if dst < 0:
+			continue
+		for k in 4:
+			bones[dst * 4 + k] = bones[src * 4 + k]
+			w[dst * 4 + k] = w[src * 4 + k]
+		moved += 1
+	arr[Mesh.ARRAY_BONES] = bones
+	arr[Mesh.ARRAY_WEIGHTS] = w
+	mi.mesh = build_mesh(arr, s["lods"])
+	# проход 2: оставшиеся растянутые треугольники — удаляем
+	var bad: Dictionary = find_bad.call(candidates.call())
+	var filt := func(li: PackedInt32Array) -> PackedInt32Array:
+		var out := PackedInt32Array()
+		for t in range(0, li.size(), 3):
+			var ok := true
+			for e in 3:
+				var a := li[t + e]
+				var c := li[t + (e + 1) % 3]
+				if bad.has(Vector2i(mini(a, c), maxi(a, c))):
+					ok = false
+					break
+			if ok:
+				out.append_array(PackedInt32Array([li[t], li[t + 1], li[t + 2]]))
+		return out
+	var before: int = (s["idx"] as PackedInt32Array).size() / 3
+	s["idx"] = filt.call(s["idx"])
+	for key in (s["lods"] as Dictionary).keys():
+		s["lods"][key] = filt.call(s["lods"][key])
+	arr[Mesh.ARRAY_INDEX] = s["idx"]
+	mi.mesh = build_mesh(arr, s["lods"])
+	print("  webs: %d hand vertices moved to body, %d triangles cut" % [moved, before - (s["idx"] as PackedInt32Array).size() / 3])
