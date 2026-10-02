@@ -1,1 +1,22 @@
-{"z_walker": 1, "soldier": "c", "ak47": "c", "z_fat": 1, "z_armored": 1, "z_boomer": 1, "z_brute": 1, "machete": 2, "axe": 0, "turret_cannon": 2, "car_wreck": 0, "dead_tree": 0, "ruined_house": 3, "watchtower": 0}
+{
+    "z_brute":  1,
+    "machete":  2,
+    "watchtower":  0,
+    "turret_rocket":  0,
+    "car_wreck":  0,
+    "axe_v2":  1,
+    "turret_flame":  1,
+    "ak47":  "c",
+    "axe":  0,
+    "dead_tree":  0,
+    "ak47_v2":  "c",
+    "z_fat":  1,
+    "turret_cannon":  2,
+    "turret_gatling2":  2,
+    "z_walker":  1,
+    "soldier":  "c",
+    "turret_pkm":  2,
+    "z_boomer":  1,
+    "z_armored":  1,
+    "ruined_house":  3
+}

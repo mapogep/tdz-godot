@@ -24,6 +24,10 @@ var env: Environment
 var world_env: WorldEnvironment
 var quality := 2
 var my_id := 1
+var dyn_res := true                 # динамическое разрешение 3D (FSR) — держит плавность на слабых видеокартах
+var _dyn_acc := 0.0
+var _dyn_n := 0
+var _dyn_scale := 1.0
 
 var turret_views: Dictionary = {}     # id -> Dictionary
 var zombie_views: Dictionary = {}     # id -> Dictionary
@@ -48,7 +52,6 @@ var free_pitch := 0.0
 var player_views: Dictionary = {}     # pid -> Dictionary
 
 var _walls_mm: MultiMeshInstance3D
-var _walls_mm2: MultiMeshInstance3D
 var _wall_keys: Array = []
 var _wall_sig := ""
 var _time := 0.0
@@ -170,6 +173,33 @@ func apply_quality(q: int) -> void:
 		vp.msaa_3d = [Viewport.MSAA_DISABLED, Viewport.MSAA_2X, Viewport.MSAA_2X, Viewport.MSAA_4X][q]
 		vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA if q <= 1 else Viewport.SCREEN_SPACE_AA_DISABLED
 		vp.use_taa = q >= 3
+		vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR
+		vp.scaling_3d_scale = _dyn_scale
+
+
+## Динамическое разрешение: каждые ~1.5 с по среднему FPS понижаем/повышаем масштаб 3D-рендера (0.6…1.0),
+## картинку растягивает FSR 1.0 с резкостью. Интерфейс всегда в полном разрешении.
+func _dynamic_resolution(delta: float) -> void:
+	if not dyn_res or delta <= 0.0:
+		return
+	_dyn_acc += delta
+	_dyn_n += 1
+	if _dyn_acc < 1.5:
+		return
+	var fps := _dyn_n / _dyn_acc
+	_dyn_acc = 0.0
+	_dyn_n = 0
+	var s := _dyn_scale
+	if fps < 45.0:
+		s = maxf(0.6, s - (0.1 if fps < 35.0 else 0.05))
+	elif fps > 57.0:
+		s = minf(1.0, s + 0.05)
+	if not is_equal_approx(s, _dyn_scale):
+		_dyn_scale = s
+		var vp := get_viewport()
+		if vp != null:
+			vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR
+			vp.scaling_3d_scale = s
 
 
 # ───────────────────────── статический мир ─────────────────────────
@@ -191,9 +221,8 @@ func _build_ground() -> void:
 
 
 func _build_walls() -> void:
-	# стены игрока: бетонные блоки (иногда — бочка); MultiMesh на каждый вид
+	# стены игрока: бетонные блоки (MultiMesh)
 	_walls_mm = _make_mm("concrete_block", WALL_CAP)
-	_walls_mm2 = _make_mm("barrel", WALL_CAP)
 
 
 func _make_mm(model: String, cap: int) -> MultiMeshInstance3D:
@@ -210,7 +239,8 @@ func _make_mm(model: String, cap: int) -> MultiMeshInstance3D:
 	return inst
 
 
-## Внешняя стена — ряд бочек (fence_barrels по 3 клетки + одиночные бочки на остатках), ворота остаются проёмами.
+## Внешняя стена — бетонные заграждения (fence_concrete на 3 клетки + бетонные блоки на остатках), высота 2 м;
+## ворота остаются проёмами.
 func _build_ring() -> void:
 	var n := nav.size
 	var runs: Array = []      # [start Vector2i, dir Vector2i, length]
@@ -244,15 +274,15 @@ func _build_ring() -> void:
 			var mid := (c0 + c1) * 0.5
 			if take == 3:
 				# длинная ось модели — Z; вдоль X поворачиваем на 90°
-				var basis := Basis(Vector3.UP, PI / 2.0 if d.x != 0 else 0.0) * Basis.from_scale(Vector3.ONE * 0.9)
+				var basis := Basis(Vector3.UP, PI / 2.0 if d.x != 0 else 0.0) * Basis.from_scale(Vector3(1.0 / 1.21, 2.0 / 1.49, 3.0 / 5.95))
 				fence_xf.append(Transform3D(basis, Vector3(mid.x, 0.0, mid.y)))
 			else:
 				for k in take:
 					var c := NavSim.cell_to_world(s + d * (i + k))
-					var b2 := Basis(Vector3.UP, rng.randf() * TAU) * Basis.from_scale(Vector3.ONE * 0.92)
+					var b2 := Basis(Vector3.UP, PI / 2.0 if d.x != 0 else 0.0) * Basis.from_scale(Vector3(1.0 / 1.18, 2.0 / 1.49, 1.0 / 1.97))
 					single_xf.append(Transform3D(b2, Vector3(c.x, 0.0, c.y)))
 			i += take
-	for pair in [["fence_barrels", fence_xf], ["barrel", single_xf]]:
+	for pair in [["fence_concrete", fence_xf], ["concrete_block", single_xf]]:
 		var xfs: Array = pair[1]
 		if xfs.is_empty() or Assets.baked_mesh(pair[0]) == null:
 			continue
@@ -465,30 +495,22 @@ func set_walls(cells: Array) -> void:
 	for k in cells:
 		set[int(k)] = true
 	var mm := _walls_mm.multimesh
-	var mm2 := _walls_mm2.multimesh
 	var c1 := 0
-	var c2 := 0
-	# блок 1.18×1.49×1.97 (длинная ось — Z) сжимается до клетки: 0.9 × 1.2 × 1.0; вдоль ряда стен поворачиваем
+	# стены игрока — бетонные блоки: блок 1.18×1.49×1.97 (длинная ось — Z) сжимается до клетки 0.9 × WALL_HEIGHT × 1.0;
+	# в ряду стен блок поворачивается вдоль ряда
 	var block_scale := Vector3(0.764, Cfg.WALL_HEIGHT / 1.4914, 0.507)
 	for k in cells:
+		if c1 >= WALL_CAP:
+			break
 		var x: int = int(k) % n
 		var y: int = int(k) / n
 		var w := NavSim.cell_to_world(Vector2i(x, y))
-		if (x * 7 + y * 13) % 5 == 0 and c2 < WALL_CAP:
-			# бочка (масштаб под высоту стены), случайный поворот
-			var ang := float((x * 31 + y * 17) % 628) / 100.0
-			var b := Basis(Vector3.UP, ang) * Basis.from_scale(Vector3.ONE * (Cfg.WALL_HEIGHT / 1.9785))
-			mm2.set_instance_transform(c2, Transform3D(b, Vector3(w.x, 0.0, w.y)))
-			c2 += 1
-		elif c1 < WALL_CAP:
-			var along_x := set.has(y * n + x - 1) or set.has(y * n + x + 1)
-			var along_z := set.has((y - 1) * n + x) or set.has((y + 1) * n + x)
-			var ang2 := PI / 2.0 if (along_x and not along_z) else 0.0
-			var b2 := Basis(Vector3.UP, ang2) * Basis.from_scale(block_scale)
-			mm.set_instance_transform(c1, Transform3D(b2, Vector3(w.x, 0.0, w.y)))
-			c1 += 1
+		var along_x := set.has(y * n + x - 1) or set.has(y * n + x + 1)
+		var along_z := set.has((y - 1) * n + x) or set.has((y + 1) * n + x)
+		var ang := PI / 2.0 if (along_x and not along_z) else 0.0
+		mm.set_instance_transform(c1, Transform3D(Basis(Vector3.UP, ang) * Basis.from_scale(block_scale), Vector3(w.x, 0.0, w.y)))
+		c1 += 1
 	mm.visible_instance_count = c1
-	mm2.visible_instance_count = c2
 
 func wall_at(cell: Vector2i) -> bool:
 	return _wall_keys.has(cell.y * nav.size + cell.x)
@@ -947,6 +969,7 @@ func _play_fps_events(list: Array) -> void:
 func _process(delta: float) -> void:
 	_time += delta
 	scenery.animate_lights(_time)
+	_dynamic_resolution(delta)
 
 	# турели: плавный поворот; своя турель в FPS — точно по прицелу
 	var ta := 1.0 - exp(-delta * 18.0)

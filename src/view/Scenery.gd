@@ -8,7 +8,7 @@ extends Node3D
 var flicker_lights: Array = []          # [{light, base, phase}]
 var smoke_sources: Array[Vector3] = []
 var _buckets: Dictionary = {}           # "модель|near" -> Array[Transform3D]
-var _baked: Dictionary = {}             # запечённая модель -> Array[Transform3D]
+var _baked: Dictionary = {}             # "запечённая модель|near" -> Array[Transform3D]
 var _rng := RandomNumberGenerator.new()
 var _mid := 10.0
 var _fs := 20
@@ -42,13 +42,17 @@ func _between(a: float, b: float) -> float:
 func _add(model: String, x: float, z: float, rot_y: float, scale_f: float, tilt: float = 0.0, sink: float = 0.0) -> void:
 	if not Assets.has(model):
 		return
-	var near := absf(x - _mid) < 34.0 and absf(z - _mid) < 34.0
-	var key := "%s|%d" % [model, 1 if near else 0]
+	var key := "%s|%d" % [model, 1 if _is_near(x, z) else 0]
 	var basis := Basis.from_euler(Vector3((_rng.randf() - 0.5) * tilt, rot_y, (_rng.randf() - 0.5) * tilt)).scaled(Vector3.ONE * scale_f)
 	var xf := Transform3D(basis, Vector3(x, -sink, z))
 	if not _buckets.has(key):
 		_buckets[key] = []
 	_buckets[key].append(xf)
+
+
+## Ближняя зона: только её предметы отбрасывают тени (тени дальнего фона почти не видны, а стоят как вторая отрисовка).
+func _is_near(x: float, z: float) -> bool:
+	return absf(x - _mid) < 26.0 and absf(z - _mid) < 26.0
 
 
 func _on_road(x: float, z: float) -> bool:
@@ -116,12 +120,12 @@ func _roads() -> void:
 
 
 func _west() -> void:
-	_fill_baked("car_wreck", 10, -44, -4, _mid - 5.5, _mid + 5.5, Vector2(4.2, 4.9), 0.1, 0.04, true)
+	_fill_baked("car_wreck", 7, -44, -4, _mid - 5.5, _mid + 5.5, Vector2(4.2, 4.9), 0.1, 0.04, true)
 	_fill(["firetruck", "garbage-truck"], 2, -40, -8, _mid - 5, _mid + 5, Vector2(1.4, 1.6), 0.12, 0.05, false, true)
 	_fill(["debris-tire", "debris-door", "debris-bumper", "debris-plate-a", "debris-plate-b", "debris-drivetrain",
 		"debris-door-window", "wheel-default", "debris", "debris-wood"], 70, -46, -3, _mid - 9, _mid + 9, Vector2(1.6, 2.6), 0.0, 0.0, false, true)
 	_fill(["crate", "crate-color", "crate-small"], 14, -30, -4, _mid - 8, _mid + 8, Vector2(2, 3))
-	_fill_baked("ruined_house", 9, -60, -12, -18, _fs + 18, Vector2(7.0, 9.5), 0.03, 0.05)
+	_fill_baked("ruined_house", 6, -60, -12, -18, _fs + 18, Vector2(7.0, 9.5), 0.03, 0.05)
 	_fill(["low-detail-building-a", "low-detail-building-c", "low-detail-building-e", "low-detail-building-h", "low-detail-building-wide-a"],
 		8, -70, -30, -25, _fs + 25, Vector2(5.0, 7.5), 0.04, 0.05, true)
 
@@ -133,10 +137,10 @@ func _east() -> void:
 	_fill(low, 34, _fs + 12, _fs + 62, -22, _fs + 22, Vector2(4.5, 8.0), 0.0, 0.05, true)
 	_fill(["building-a", "building-d", "building-g"], 10, _fs + 10, _fs + 42, -16, _fs + 16, Vector2(4.2, 5.4), 0.0, 0.04, true)
 	_fill(["building-skyscraper-a", "building-skyscraper-c", "building-skyscraper-e"], 10, _fs + 45, _fs + 95, -30, _fs + 30, Vector2(5.5, 7.5), 0.0, 0.0, true)
-	_fill_baked("ruined_house", 5, _fs + 8, _fs + 22, -12, _fs + 12, Vector2(7.0, 9.0), 0.02, 0.04)
+	_fill_baked("ruined_house", 4, _fs + 8, _fs + 22, -12, _fs + 12, Vector2(7.0, 9.0), 0.02, 0.04)
 	_camp(_fs + 5.5, _mid - 7.5)
 	_camp(_fs + 6.5, _mid + 8.0)
-	_fill_baked("car_wreck", 6, _fs + 5, _fs + 34, _mid - 5, _mid + 5, Vector2(4.2, 4.9), 0.08, 0.04, true)
+	_fill_baked("car_wreck", 4, _fs + 5, _fs + 34, _mid - 5, _mid + 5, Vector2(4.2, 4.9), 0.08, 0.04, true)
 	_fill(["debris-tire", "debris-door", "debris-plate-a", "debris"], 28, _fs + 3, _fs + 40, -14, _fs + 14, Vector2(1.6, 2.4), 0.0, 0.0, false, true)
 
 
@@ -159,7 +163,7 @@ func _wilderness() -> void:
 		_fill(["rock-largea", "rock-largeb", "rock-largec", "rock-larged", "rock-largee", "rock-largef"], 16, r[0], r[1], r[2], r[3], Vector2(3, 5))
 		_fill(["rock-tallb", "rock-tallc", "rock-talld", "rock-smalla", "rock-smallb", "rock-smallc", "rock-smallflata"], 26, r[0], r[1], r[2], r[3], Vector2(2.4, 4))
 		_fill(["plant-bushdetailed", "plant-bushsmall"], 16, r[0], r[1], r[2], r[3], Vector2(2, 3))
-		_fill_baked("car_wreck", 4, r[0], r[1], r[2], r[3], Vector2(4.2, 4.9), 0.18, 0.08)
+		_fill_baked("car_wreck", 2, r[0], r[1], r[2], r[3], Vector2(4.2, 4.9), 0.18, 0.08)
 		_fill(["debris-tire", "debris-door", "debris-bumper", "debris-plate-a", "debris-plate-b", "debris-drivetrain", "debris"], 24, r[0], r[1], r[2], r[3], Vector2(1.6, 2.6))
 		_fill(["fence-simple", "fence-planks", "fence-bend", "iron-fence", "fence"], 14, r[0], r[1], r[2], r[3], Vector2(2, 3), 0.15)
 	_fill(["pine-fall", "pine-crooked", "trunk", "stump-old"], 40, -80, -8, -50, _fs + 50, Vector2(1.4, 2.4), 0.12)
@@ -174,9 +178,10 @@ func _add_baked(model: String, x: float, z: float, rot_y: float, size_m: float, 
 	var bb := mesh.get_aabb()
 	var k := size_m / maxf(bb.size.x, maxf(bb.size.y, bb.size.z))
 	var basis := Basis.from_euler(Vector3((_rng.randf() - 0.5) * tilt, rot_y, (_rng.randf() - 0.5) * tilt)).scaled(Vector3.ONE * k)
-	if not _baked.has(model):
-		_baked[model] = []
-	_baked[model].append(Transform3D(basis, Vector3(x, -sink, z)))
+	var key := "%s|%d" % [model, 1 if _is_near(x, z) else 0]
+	if not _baked.has(key):
+		_baked[key] = []
+	_baked[key].append(Transform3D(basis, Vector3(x, -sink, z)))
 
 
 func _fill_baked(model: String, n: int, x0: float, x1: float, z0: float, z1: float, size_range: Vector2, tilt: float = 0.0,
@@ -206,8 +211,9 @@ func _towers() -> void:
 
 
 func _flush() -> void:
-	for model in _baked.keys():
-		var list: Array = _baked[model]
+	for key in _baked.keys():
+		var model: String = str(key).split("|")[0]
+		var list: Array = _baked[key]
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
 		mm.mesh = Assets.baked_mesh(model)
@@ -217,7 +223,7 @@ func _flush() -> void:
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
 		mmi.material_override = Assets.model_material(model, true)
-		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if _quality >= 1 else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if (str(key).ends_with("|1") and _quality >= 1) else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		mmi.visibility_range_end = 170.0
 		add_child(mmi)
 	_baked.clear()
@@ -385,6 +391,8 @@ func _gates() -> void:
 			var lm := SphereMesh.new()
 			lm.radius = 0.17
 			lm.height = 0.34
+			lm.radial_segments = 8
+			lm.rings = 4
 			lamp.mesh = lm
 			var lmat := StandardMaterial3D.new()
 			lmat.albedo_color = glow

@@ -59,6 +59,10 @@ func _init() -> void:
 	if node.has_meta("rig_height"):
 		c = Vector3(0, float(node.get_meta("rig_height")) * 0.5, 0)
 	size = maxf(bb.size.x, maxf(bb.size.y, bb.size.z)) * 1.15
+	if node.has_meta("height"):          # турель: custom_aabb с запасом — кадрируем по высоте модели
+		var hh: float = float(node.get_meta("height"))
+		c = Vector3(0, hh * 0.5, 0)
+		size = hh * 1.9
 	cam = Camera3D.new()
 	cam.projection = Camera3D.PROJECTION_ORTHOGONAL
 	cam.size = size

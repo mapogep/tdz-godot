@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bfxyr4juomkoq"
-path="res://.godot/imported/turret_machinegun.jpg-3632ec5cc1ff3134cc639148c0f542e6.ctex"
+uid="uid://bqaawdvfquee8"
+path="res://.godot/imported/turret_rocket.jpg-acf9c34ca40c912c541a2da78f15f670.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/tex/models/turret_machinegun.jpg"
-dest_files=["res://.godot/imported/turret_machinegun.jpg-3632ec5cc1ff3134cc639148c0f542e6.ctex"]
+source_file="res://assets/tex/models/turret_rocket.jpg"
+dest_files=["res://.godot/imported/turret_rocket.jpg-acf9c34ca40c912c541a2da78f15f670.ctex"]
 
 [params]
 

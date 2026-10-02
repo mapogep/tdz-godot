@@ -62,6 +62,9 @@ var _free_sub: Label
 var _free_top: Label
 var _free_reload: ProgressBar
 var _free_hint: Label
+var _hotkeys: PanelContainer
+var _hotkeys_lbl: Label
+const TOP_BAR := 30.0              # высота полосы горячих клавиш сверху
 var _vignette: TextureRect
 var _vig_t := 0.0
 var _dead_panel: PanelContainer
@@ -125,6 +128,7 @@ func build(p_st: ClientState) -> void:
 	_build_pause()
 	_build_game_over()
 	_build_scores()
+	_build_hotkeys()
 	_build_menu_overlay()
 	I18n.language_changed.connect(func() -> void:
 		_sig_tools = ""
@@ -159,7 +163,7 @@ func _button(text: String, cb: Callable, kind: String = "") -> Button:
 func _build_top_left() -> void:
 	_top_left = PanelContainer.new()
 	root.add_child(_top_left)
-	_top_left.position = Vector2(12, 12)
+	_top_left.position = Vector2(12, 12 + TOP_BAR)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 3)
 	_top_left.add_child(v)
@@ -204,6 +208,7 @@ func _build_top_right() -> void:
 	_right_box.add_theme_constant_override("separation", 8)
 	root.add_child(_right_box)
 	_right_box.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT, Control.PRESET_MODE_MINSIZE, 12)
+	_right_box.offset_top += TOP_BAR
 	_right_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", 6)
@@ -381,7 +386,7 @@ func _build_fps() -> void:
 	_fps_root.add_child(_cross)
 	_fps_wave = _label("", 20)
 	_fps_root.add_child(_fps_wave)
-	_fps_wave.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, Control.PRESET_MODE_MINSIZE, 14)
+	_fps_wave.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, Control.PRESET_MODE_MINSIZE, 14 + TOP_BAR)
 	var br := VBoxContainer.new()
 	br.alignment = BoxContainer.ALIGNMENT_END
 	_fps_root.add_child(br)
@@ -437,7 +442,7 @@ func _build_free_fps() -> void:
 	var top := VBoxContainer.new()
 	top.alignment = BoxContainer.ALIGNMENT_BEGIN
 	_free_root.add_child(top)
-	top.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, Control.PRESET_MODE_MINSIZE, 12)
+	top.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, Control.PRESET_MODE_MINSIZE, 12 + TOP_BAR)
 	_free_top = _label("", 20)
 	_free_top.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	top.add_child(_free_top)
@@ -498,6 +503,7 @@ func damage_flash(amount: float) -> void:
 
 func _process(delta: float) -> void:
 	_fit_panels()
+	_update_hotkeys()
 	_update_board()
 	if _vignette != null:
 		_vig_t = maxf(0.0, _vig_t - delta * 1.2)
@@ -546,7 +552,7 @@ func _refresh_free(s: Dictionary) -> void:
 		_free_ammo.text = I18n.t("w_" + str(f["melee"]))
 		_free_sub.text = "%s: %d" % [I18n.t("damage"), int(Cfg.PWEAPONS[str(f["melee"])]["damage"])]
 		_free_reload.value = 0.0
-	_free_hint.text = I18n.t("free_hint")
+	_free_hint.text = ""
 
 
 func _build_pause() -> void:
@@ -968,8 +974,8 @@ func _refresh_fps(s: Dictionary, mine: Dictionary) -> void:
 	else:
 		_ammo_lbl.text = "%d / %d" % [int(mine["ammo"]), int(stats["mag"])]
 	var dmg := snappedf(float(stats["damage"]) * float(Cfg.TURRET["fps_mul"]), 0.1)
-	_fps_hint.text = "%s · %s %d · %s %s%s · %s" % [I18n.t("w_" + w), I18n.t("level"), int(mine["level"]), I18n.t("damage"), str(dmg),
-		" " + I18n.t("per_tick") if w == "flame" else "", I18n.t("fps_hint")]
+	_fps_hint.text = "%s · %s %d · %s %s%s" % [I18n.t("w_" + w), I18n.t("level"), int(mine["level"]), I18n.t("damage"), str(dmg),
+		" " + I18n.t("per_tick") if w == "flame" else ""]
 	update_reload(bool(mine["reloading"]), float(stats["reload"]))
 
 
@@ -1130,3 +1136,33 @@ func _update_board() -> void:
 		if n.has_meta("i18n"):
 			n.text = I18n.t(n.get_meta("i18n"))
 	_fill_grid(_board_grid, [I18n.t("rank"), I18n.t("player"), I18n.t("score"), I18n.t("kills"), I18n.t("deaths")], rows)
+
+
+# ───────────────────────── горячие клавиши (полоса сверху) ─────────────────────────
+
+func _build_hotkeys() -> void:
+	_hotkeys = PanelContainer.new()
+	_hotkeys.add_theme_stylebox_override("panel", UiTheme.box(Color(0.06, 0.05, 0.04, 0.78), Color(1, 0.75, 0.4, 0.18), 0, 1, Vector4(12, 4, 12, 4)))
+	_hotkeys.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(_hotkeys)
+	_hotkeys.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE, Control.PRESET_MODE_MINSIZE)
+	_hotkeys_lbl = _label("", 13, Color("e8d6b8"))
+	_hotkeys_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hotkeys_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_hotkeys_lbl.clip_text = true
+	_hotkeys.add_child(_hotkeys_lbl)
+
+
+## Набор клавиш зависит от режима: стратегия, турель (FPS из башни), свободный FPS.
+func _update_hotkeys() -> void:
+	if _hotkeys_lbl == null or st == null or not st.has_snap():
+		return
+	var key := "hk_strategy"
+	if st.in_free_fps():
+		key = "hk_free"
+	elif not st.my_turret().is_empty():
+		key = "hk_turret"
+	var txt := I18n.t(key)
+	if _hotkeys_lbl.text != txt:
+		_hotkeys_lbl.text = txt
+	_hotkeys.visible = not menu_open()

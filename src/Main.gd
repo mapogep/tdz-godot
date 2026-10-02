@@ -32,6 +32,8 @@ var _shots: Array = []
 func _ready() -> void:
 	get_window().min_size = Vector2i(960, 560)     # меньше интерфейс не помещается
 	_args = _parse_args()
+	if _args.has("fps"):          # замер: без vsync, иначе FPS квантуется частотой монитора
+		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	NetHub.command_received.connect(_on_command)
 	NetHub.snapshot_received.connect(_on_remote_snapshot)
 	NetHub.walls_received.connect(_apply_walls)
@@ -375,6 +377,7 @@ func _process(delta: float) -> void:
 		input_ctl.process_frame(delta)
 	_run_scenario()
 	_take_shots()
+	_measure_fps(delta)
 
 
 # ───────────────────────── сценарии для проверок ─────────────────────────
@@ -407,6 +410,8 @@ func _setup_scenario(name: String) -> void:
 						zz.z = 8.6 + i * 0.4],
 				[60, func() -> void:
 					if name == "free_melee":
+						for a in OS.get_cmdline_user_args():
+							if a.begins_with("--melee="): input_ctl._melee_kind = a.substr(8)
 						input_ctl._set_free_weapon("melee")
 						return
 					world.free_yaw = -PI / 2.0 + 0.1
@@ -455,6 +460,13 @@ func _setup_scenario(name: String) -> void:
 			_scenario_steps = [[3, func() -> void: sim.wave = 3; _on_command(1, {"t": "startWave"})]]
 			for i in range(90, 330):
 				_scenario_steps.append([i, func() -> void: _probe_smooth()])
+		"turrets":
+			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.turret_stock = 8],
+				[5, func() -> void:
+					var ws := ["gun", "machinegun", "rocket", "flame"]
+					for i in 4:
+						_on_command(1, {"t": "buildTurret", "x": 4 + i * 2, "y": 10, "weapon": ws[i]})
+					cam_rig.focus_target = Vector3(6.5, 0.5, 9.5); cam_rig.dist_target = 6.0; cam_rig.yaw_target = 0.5]]
 		"fps_mg", "fps_flame", "fps_rocket", "fps_gun":
 			var w := name.substr(4)
 			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 8; sim.turret_stock = 8],
@@ -487,6 +499,53 @@ func _probe_smooth() -> void:
 		for v in _probe_speeds: sd += (v - mean) * (v - mean)
 		sd = sqrt(sd / _probe_speeds.size())
 		print("smooth probe: frames %d mean speed %.2f m/s, std %.2f (%.0f%%)" % [_probe_speeds.size(), mean, sd, 100.0 * sd / maxf(mean, 0.001)])
+
+
+## Замер производительности (аргумент --fps=кадр_конца): средний FPS и худший кадр на отрезке [кадр/2, кадр].
+var _fps_sum := 0.0
+var _fps_n := 0
+var _fps_worst := 0.0
+
+
+func _measure_fps(delta: float) -> void:
+	if _args.has("polystats") and _frame == 120:
+		_poly_stats()
+	if not _args.has("fps"):
+		return
+	var end := int(_args["fps"])
+	if _frame > end / 2 and _frame <= end:
+		_fps_sum += delta
+		_fps_n += 1
+		_fps_worst = maxf(_fps_worst, delta)
+	if _frame == end:
+		var info := RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)
+		var calls := RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)
+		print("FPS avg %.1f, worst frame %.1f ms, primitives %d, draw calls %d" % [_fps_n / _fps_sum, _fps_worst * 1000.0, info, calls])
+		get_tree().quit()
+
+
+## Отладка: где треугольники (сетка × число экземпляров), топ-20.
+func _poly_stats() -> void:
+	var rows: Array = []
+	var total := 0
+	for n in world.find_children("*", "GeometryInstance3D", true, false):
+		var tris := 0
+		var label := str(n.name)
+		if n is MultiMeshInstance3D and (n as MultiMeshInstance3D).multimesh != null:
+			var mm := (n as MultiMeshInstance3D).multimesh
+			if mm.mesh == null: continue
+			var cnt := mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count
+			tris = mm.mesh.get_faces().size() / 3 * cnt
+			label = "MM %s x%d (%s)" % [mm.mesh.resource_path.get_file(), cnt, mm.mesh.get_faces().size() / 3]
+		elif n is MeshInstance3D and (n as MeshInstance3D).mesh != null:
+			tris = (n as MeshInstance3D).mesh.get_faces().size() / 3
+			label = "MI %s %s" % [n.get_parent().name, (n as MeshInstance3D).mesh.resource_path.get_file()]
+		total += tris
+		rows.append([tris, label])
+	rows.sort_custom(func(a, b) -> bool: return a[0] > b[0])
+	print("total tris (no LOD/culling): ", total)
+	for i in mini(25, rows.size()):
+		print("  %8d  %s" % rows[i])
 
 
 func _run_scenario() -> void:

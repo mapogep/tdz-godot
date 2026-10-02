@@ -41,6 +41,8 @@ func _init() -> void:
 		var mi := PlayerRig.weapon_mesh("ak47" if n == "ak" else n, float(BASE[n]["len"]))
 		if mi != null:
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			if n == "axe":
+				mi.rotation.y = -2.35      # лезвие (+Z модели) — вперёд-влево, чтобы был виден профиль топора
 			# своё оружие не должно «проваливаться» в стены — рисуем поверх (без теста глубины сцены не обойтись,
 			# поэтому просто держим его близко к камере)
 			node.add_child(mi)

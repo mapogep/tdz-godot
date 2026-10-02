@@ -4,6 +4,7 @@
 #   powershell -File tools\gen\run.ps1 -Stage models -Out <dir>
 param([string]$Stage = "refs", [string]$Out = "", [string[]]$Only = @())
 $ErrorActionPreference = "Stop"
+$Only = @($Only | ForEach-Object { $_ -split "," } | Where-Object { $_ -ne "" })
 $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 . (Join-Path $PSScriptRoot "swarm.ps1")
 if ($Out -eq "") { $Out = Join-Path $Root "assets\source\refs" }

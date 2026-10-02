@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://ctu8lyq8ef6ug"
-path="res://.godot/imported/turret_artillery.jpg-b660bad6df15285c6f983b8f68b19ec3.ctex"
+uid="uid://c2cohppdoxyg"
+path="res://.godot/imported/turret_gatling2.jpg-065c24ebe0c501dc409e5d84a65573d6.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/tex/models/turret_artillery.jpg"
-dest_files=["res://.godot/imported/turret_artillery.jpg-b660bad6df15285c6f983b8f68b19ec3.ctex"]
+source_file="res://assets/tex/models/turret_gatling2.jpg"
+dest_files=["res://.godot/imported/turret_gatling2.jpg-065c24ebe0c501dc409e5d84a65573d6.ctex"]
 
 [params]
 

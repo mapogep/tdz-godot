@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dshrc4f7y74sp"
-path="res://.godot/imported/turret_flamethrower.jpg-0c316ad0f624bab5604703f0b29c2c42.ctex"
+uid="uid://bkqrcj6a42cj6"
+path="res://.godot/imported/turret_pkm.jpg-5c7f18581f2b42b18cedc7e413e8ec81.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/tex/models/turret_flamethrower.jpg"
-dest_files=["res://.godot/imported/turret_flamethrower.jpg-0c316ad0f624bab5604703f0b29c2c42.ctex"]
+source_file="res://assets/tex/models/turret_pkm.jpg"
+dest_files=["res://.godot/imported/turret_pkm.jpg-5c7f18581f2b42b18cedc7e413e8ec81.ctex"]
 
 [params]
 

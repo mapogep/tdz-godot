@@ -118,6 +118,8 @@ func _make_flash() -> MeshInstance3D:
 	var s := SphereMesh.new()
 	s.radius = 0.1
 	s.height = 0.2
+	s.radial_segments = 8
+	s.rings = 4
 	f.mesh = s
 	f.material_override = fm
 	f.visible = false

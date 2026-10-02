@@ -93,25 +93,30 @@ func _build_base() -> Array:
 	var accent: Color = LEVEL_COLORS[mini(level, LEVEL_COLORS.size()) - 1]
 	var steel := _mat(Color("6b6053"), 0.55, 0.6)
 	var dark := _mat(Color("2b2723"), 0.5, 0.7)
-	var accent_m := _mat(accent, 0.4, 0.35, accent, 0.6)
+	var accent_m := _mat(accent, 0.4, 0.35, accent, 0.25)
 	if not _own_base():
 		_cyl(0.46, 0.5, 0.22, dark, Vector3(0, 0.11, 0), false, null, 20)
 	var ring := MeshInstance3D.new()
 	var tor := TorusMesh.new()
-	tor.inner_radius = 0.38
-	tor.outer_radius = 0.46
+	tor.inner_radius = 0.43
+	tor.outer_radius = 0.47
 	tor.rings = 24
-	tor.ring_segments = 8
+	tor.ring_segments = 4
 	ring.mesh = tor
 	ring.material_override = accent_m
-	ring.position = Vector3(0, 0.24, 0)
+	ring.position = Vector3(0, 0.24 if not _own_base() else 0.02, 0)
+	if _own_base():           # у моделей — плоское тонкое кольцо уровня у земли
+		ring.scale = Vector3(1.0, 0.3, 1.0)
 	add_child(ring)
 	if not _own_base():   # у моделей собственное основание — стойка не нужна
 		_cyl(0.22, 0.32, 0.7, steel, Vector3(0, 0.58, 0), false, null, 16)
 	# точки-индикаторы уровня по кругу основания
 	for i in level:
 		var a := float(i) / 10.0 * TAU
-		_sphere(0.035, accent_m, Vector3(sin(a) * 0.36, 0.26, cos(a) * 0.36))
+		if _own_base():
+			_sphere(0.03, accent_m, Vector3(sin(a) * 0.45, 0.03, cos(a) * 0.45))
+		else:
+			_sphere(0.035, accent_m, Vector3(sin(a) * 0.36, 0.26, cos(a) * 0.36))
 	return [steel, dark, accent_m]
 
 
@@ -135,6 +140,9 @@ func _build() -> void:
 
 
 var _skel: Skeleton3D
+var _bone_barrels := -1                     # стволы «Гатлинга» (вращаются при стрельбе)
+var _spin_axis := Vector3(0, 0, 1)
+var _spin_angle := 0.0
 var _gun_axis := Vector3(0, 0, 1)         # ось наклона орудия (в системе модели)
 var _recoil_dir := Vector3(-1, 0, 0)        # направление отката (в системе модели)
 var _recoil_amt := 0.09
@@ -147,10 +155,11 @@ var _gun_rest := Vector3.ZERO
 
 ## Модели турелей (tools/bake_all.gd → assets/models/baked/*.scn): скелет root / turret (yaw) / gun (pitch, отдача).
 const RIGGED := {
-	"gun": {"scene": "cannon", "tex": "turret_cannon", "scale": 0.6, "recoil": 0.1, "cam_back": 1.25, "cam_up": 1.0},
-	"machinegun": {"scene": "machinegun", "tex": "turret_machinegun", "scale": 0.62, "recoil": 0.07, "cam_back": 1.0, "cam_up": 0.6},
-	"rocket": {"scene": "artillery", "tex": "turret_artillery", "scale": 0.62, "recoil": 0.12, "cam_back": 1.35, "cam_up": 0.72},
-	"flame": {"scene": "flamethrower", "tex": "turret_flamethrower", "scale": 0.6, "recoil": 0.0, "cam_back": 1.4, "cam_up": 0.78},
+	# базовая — пулемёт типа ПКМ на тумбе, пулемёт — многоствольный «Гатлинг» (стволы вращаются), ракетомёт, огнемёт
+	"gun": {"scene": "pkm", "tex": "turret_pkm", "scale": 0.62, "recoil": 0.05, "cam_back": 1.0, "cam_up": 0.55},
+	"machinegun": {"scene": "gatling", "tex": "turret_gatling2", "scale": 0.62, "recoil": 0.02, "cam_back": 1.1, "cam_up": 0.6},
+	"rocket": {"scene": "rocket", "tex": "turret_rocket", "scale": 0.62, "recoil": 0.12, "cam_back": 1.3, "cam_up": 0.7},
+	"flame": {"scene": "flame", "tex": "turret_flame", "scale": 0.6, "recoil": 0.0, "cam_back": 1.3, "cam_up": 0.7},
 }
 
 
@@ -185,6 +194,9 @@ func _build_rigged() -> void:
 	_recoil_amt = float(cfg["recoil"])
 	_pitch_min = -0.2
 	_pitch_max = 0.4
+	_bone_barrels = _skel.find_bone("barrels")
+	if _bone_barrels >= 0:
+		_spin_axis = sc.get_meta("spin_axis", Vector3(0, 0, 1))
 	# дуло привязано к кости орудия (следует за наклоном и откатом)
 	var att := BoneAttachment3D.new()
 	att.bone_name = "gun"
@@ -266,6 +278,8 @@ func _build_flame(m: Array) -> void:
 		var tor := TorusMesh.new()
 		tor.inner_radius = 0.19
 		tor.outer_radius = 0.22
+		tor.rings = 16
+		tor.ring_segments = 4
 		band.mesh = tor
 		band.material_override = accent
 		band.rotation.z = PI / 2.0
@@ -313,6 +327,10 @@ func _process(delta: float) -> void:
 	_recoil = maxf(0.0, _recoil - delta * 8.0)
 	if _skel != null:
 		_skel.set_bone_pose_position(_bone_gun, _gun_rest + _recoil_dir * (_recoil_amt * _recoil))
+		if _bone_barrels >= 0:
+			_spin = maxf(0.0, _spin - delta * 30.0)
+			_spin_angle = wrapf(_spin_angle + _spin * delta, 0.0, TAU)
+			_skel.set_bone_pose_rotation(_bone_barrels, Quaternion(_spin_axis, _spin_angle))
 		return
 	pivot.position.z = base_z - _recoil * 0.12
 	if spinner != null:

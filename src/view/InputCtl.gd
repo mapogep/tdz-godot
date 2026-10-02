@@ -55,6 +55,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.keycode == KEY_F2:
 			go_free()
 			return
+		if event.keycode == KEY_F5:
+			_send({"t": "startWave"})      # начать волну досрочно (решает Host; вне подготовки — подсказка об ошибке)
+			return
 	if free_active:
 		_free_event(event)
 		return

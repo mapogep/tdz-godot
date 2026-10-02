@@ -13,38 +13,53 @@ const SRC := "res://assets/source/"
 const OUT := "res://assets/models/baked/"
 const TEX := "res://assets/tex/models/"
 
-# статичные предметы: [имя, размер текстуры, доля треугольников]
+# статичные предметы: [имя, размер текстуры, целевое число треугольников]
 const PROPS := [
-	["barrel", 1024, 0.6], ["concrete_block", 1024, 0.6], ["fence_barrels", 1024, 0.6], ["fence_concrete", 1024, 0.6],
-	["car_wreck", 1024, 0.8], ["ruined_house", 1024, 0.9], ["watchtower", 1024, 0.9],
+	["barrel", 512, 240], ["concrete_block", 512, 160], ["fence_concrete", 1024, 500],
+	["car_wreck", 512, 700], ["ruined_house", 1024, 1400], ["watchtower", 512, 800],
 ]
 
-# турели: cut — высота среза вращающейся части, fwd — направление ствола в XZ, (cx, cz) — ось вращения (система модели)
+# турели: auto — ось вращения, срез и направление ствола определяются по форме (auto_turret); иначе cut — высота среза
+# вращающейся части, fwd — направление ствола в XZ, (cx, cz) — ось вращения (система модели); spin — у пулемёта Гатлинга
+# стволы — отдельная кость, вращается при стрельбе
 const TURRETS := {
-	"turret_machinegun": {"out": "machinegun", "cut": -0.55, "fwd": Vector2(-0.98, -0.19), "cx": 0.0, "cz": 0.0},
-	"turret_flamethrower": {"out": "flamethrower", "cut": 0.0, "fwd": Vector2(-1.0, 0.0), "cx": 0.36, "cz": 0.0},
-	"turret_artillery": {"out": "artillery", "cut": -0.05, "fwd": Vector2(-0.55, 0.83), "cx": 0.04, "cz": -0.4},
-	"turret_cannon": {"out": "cannon", "cut": -0.43, "fwd": Vector2(1.0, 0.0), "cx": -0.08, "cz": -0.02},
+	"turret_pkm": {"out": "pkm", "auto": true, "tris": 1600},
+	"turret_gatling2": {"out": "gatling", "auto": true, "tris": 1600, "spin": true},
+	"turret_rocket": {"out": "rocket", "auto": true, "tris": 1600},
+	"turret_flame": {"out": "flame", "auto": true, "tris": 1600, "fwd": Vector2(-1.0, 0.0)},   # сверху — ручка, сбивает поиск ствола
 }
 
-# гуманоиды: авто-скелет; kind — набор анимаций; ratio — доля треугольников после упрощения
+# гуманоиды: авто-скелет; kind — набор анимаций; tris — целевое число треугольников
 const HUMANOIDS := {
-	"z_walker": {"kind": "zombie", "ratio": 0.75, "tex": 1024},
-	"z_fat": {"kind": "zombie", "ratio": 0.75, "tex": 1024},
-	"z_armored": {"kind": "zombie", "ratio": 0.75, "tex": 1024},
-	"z_boomer": {"kind": "zombie", "ratio": 0.75, "tex": 1024},
-	"z_brute": {"kind": "zombie", "ratio": 0.8, "tex": 1024},
-	"soldier": {"kind": "soldier", "ratio": 0.8, "tex": 1024},
+	"z_walker": {"kind": "zombie", "tris": 1300, "tex": 1024},
+	"z_fat": {"kind": "zombie", "tris": 1300, "tex": 1024},
+	"z_armored": {"kind": "zombie", "tris": 1300, "tex": 1024},
+	"z_boomer": {"kind": "zombie", "tris": 1300, "tex": 1024},
+	"z_brute": {"kind": "zombie", "tris": 1600, "tex": 1024},
+	"soldier": {"kind": "soldier", "tris": 1600, "tex": 1024},
 }
 
-# оружие: gun — длинная ось к -Z (ствол вперёд), вторая ось — по высоте, «хвост» (магазин) вниз;
+# оружие (auto — ориентация определяется по форме, см. bake_weapon): gun — длинная ось к -Z (ствол вперёд), вторая ось — по высоте, «хвост» (магазин) вниз;
 # melee — длинная ось к +Y (клинок/обух вверх, рукоять внизу), вторая ось — вперёд/назад, «хвост» (головка топора,
 # лезвие) — вперёд (-Z). flip — развернуть длинную ось, tail — знак «хвоста» по второй оси.
 const WEAPONS := {
-	"ak47": {"mode": "gun", "flip": true, "tail": -1.0, "tex": 2048, "ratio": 1.0},
-	"machete": {"mode": "melee", "flip": true, "tail": 1.0, "tex": 1024, "ratio": 1.0},
-	"axe": {"mode": "melee", "flip": false, "tail": 1.0, "tex": 1024, "ratio": 1.0},
+	"ak47": {"mode": "gun", "auto": true, "tex": 1024, "tris": 1600},
+	"machete": {"mode": "melee", "flip": true, "tail": 1.0, "tex": 512, "tris": 600},
+	"axe": {"mode": "melee", "auto": true, "tex": 512, "tris": 600},
 }
+
+# какой исходник брать для имени ассета (новые версии моделей; облегчённые пересборки с меньшим числом граней)
+const SOURCE := {
+	"ak47": "ak47_v2", "axe": "axe_v2",
+}
+
+
+static func src_of(n: String) -> String:
+	var alt: String = SOURCE.get(n, "")
+	if alt != "" and FileAccess.file_exists(ProjectSettings.globalize_path(SRC + alt + ".glb")):
+		return alt
+	return n
+
 
 const GIRLS := ["girl_A", "girl_B", "girl_green", "girl_blue", "girl_red"]
 
@@ -104,7 +119,7 @@ func _run() -> void:
 
 
 func _want(n: String) -> bool:
-	if not FileAccess.file_exists(ProjectSettings.globalize_path(SRC + ("girl_A" if n == "girl" else n) + ".glb")):
+	if not FileAccess.file_exists(ProjectSettings.globalize_path(SRC + src_of("girl_A" if n == "girl" else n) + ".glb")):
 		return false
 	return only.is_empty() or only.has(n)
 
@@ -125,7 +140,7 @@ static func _rel_xform(node: Node, root: Node) -> Transform3D:
 static func load_glb(name: String) -> Dictionary:
 	var doc := GLTFDocument.new()
 	var state := GLTFState.new()
-	var err := doc.append_from_file(ProjectSettings.globalize_path(SRC + name + ".glb"), state)
+	var err := doc.append_from_file(ProjectSettings.globalize_path(SRC + src_of(name) + ".glb"), state)
 	if err != OK:
 		push_error("cannot read %s: %s" % [name, error_string(err)])
 		return {}
@@ -203,9 +218,10 @@ static func smooth_normals(verts: PackedVector3Array, idx: PackedInt32Array) -> 
 	return n
 
 
-## Упрощение сетки (meshoptimizer через ImporterMesh): базовый уровень ≈ ratio треугольников + LOD для дальних планов.
-## Возвращает {"idx": базовые индексы, "lods": {расстояние: индексы}}.
-static func simplify(verts: PackedVector3Array, normals: PackedVector3Array, uvs: PackedVector2Array, idx: PackedInt32Array, ratio: float) -> Dictionary:
+## Упрощение сетки (meshoptimizer через ImporterMesh.generate_lods) до target треугольников: уровни LOD
+## генерируются повторно от уже упрощённой сетки, пока не дойдём до цели; более грубые уровни становятся LOD
+## для дальних планов. Возвращает {"idx": базовые индексы, "lods": {расстояние: индексы}}.
+static func _lods_of(verts: PackedVector3Array, normals: PackedVector3Array, uvs: PackedVector2Array, idx: PackedInt32Array) -> Array:
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = verts
@@ -215,24 +231,36 @@ static func simplify(verts: PackedVector3Array, normals: PackedVector3Array, uvs
 	var im := ImporterMesh.new()
 	im.add_surface(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	im.generate_lods(60.0, 25.0, [])
+	var out: Array = []
+	for i in im.get_surface_lod_count(0):
+		out.append([im.get_surface_lod_size(0, i), im.get_surface_lod_indices(0, i)])
+	return out
+
+
+static func simplify(verts: PackedVector3Array, normals: PackedVector3Array, uvs: PackedVector2Array, idx: PackedInt32Array, target: int) -> Dictionary:
 	var tris := idx.size() / 3
 	var base := idx
+	var guard := 0
+	while base.size() / 3 > int(target * 1.25) and guard < 8:
+		guard += 1
+		var levels := _lods_of(verts, normals, uvs, base)
+		var pick: PackedInt32Array = PackedInt32Array()
+		for l in levels:
+			var li: PackedInt32Array = l[1]
+			if li.size() / 3 >= int(target * 0.8):
+				pick = li                       # самый грубый уровень, не ниже цели
+		if pick.is_empty() and not levels.is_empty():
+			pick = levels[0][1]                 # первый же уровень грубее цели — берём его
+		if pick.is_empty() or pick.size() >= base.size():
+			break
+		base = pick
 	var lods := {}
-	var count := im.get_surface_lod_count(0)
-	var used_base := false
-	for i in count:
-		var li: PackedInt32Array = im.get_surface_lod_indices(0, i)
-		var size := im.get_surface_lod_size(0, i)
-		var t := li.size() / 3
-		if not used_base and ratio < 0.99 and t <= int(tris * ratio) and t > tris * ratio * 0.5:
-			base = li
-			used_base = true
-			continue
-		if t < base.size() / 3 and t >= 60:
-			lods[size] = li
+	for l in _lods_of(verts, normals, uvs, base):
+		var li: PackedInt32Array = l[1]
+		if li.size() / 3 >= 60 and li.size() < base.size():
+			lods[l[0]] = li
 	print("  tris %d -> %d (lods %d)" % [tris, base.size() / 3, lods.size()])
 	return {"idx": base, "lods": lods}
-
 
 static func build_mesh(arrays: Array, lods: Dictionary) -> ArrayMesh:
 	var m := ArrayMesh.new()
@@ -265,7 +293,7 @@ static func save_scene(root: Node, path: String) -> void:
 
 # ───────────────────────── статичные предметы ─────────────────────────
 
-func bake_prop(n: String, tex_size: int, ratio: float) -> void:
+func bake_prop(n: String, tex_size: int, target: int) -> void:
 	print("prop ", n)
 	var d := load_glb(n)
 	if d.is_empty():
@@ -276,13 +304,62 @@ func bake_prop(n: String, tex_size: int, ratio: float) -> void:
 	for i in verts.size():
 		verts[i] -= off
 	var normals := smooth_normals(verts, d["idx"])
-	var s := simplify(verts, normals, d["uvs"], d["idx"], ratio)
+	var s := simplify(verts, normals, d["uvs"], d["idx"], target)
 	var mesh := build_mesh(base_arrays(verts, normals, d["uvs"], s["idx"]), s["lods"])
 	print("  size ", mesh.get_aabb().size, " -> ", error_string(ResourceSaver.save(mesh, OUT + n + ".res")))
 	save_tex(d["image"], n, tex_size)
 
 
 # ───────────────────────── турели ─────────────────────────
+
+static func _with(a: Dictionary, b: Dictionary) -> Dictionary:
+	var out := a.duplicate()
+	out.merge(b, true)
+	return out
+
+
+## Параметры турели по форме: ось вращения — центр колонны постамента (20–45 % высоты), срез — высота, где сечение
+## резко расширяется (начинается само орудие), «вперёд» — направление самых дальних от оси точек выше среза (ствол).
+static func auto_turret(verts: PackedVector3Array) -> Dictionary:
+	var bb := bounds(verts)
+	var H := bb.size.y
+	var y0 := bb.position.y
+	var col := Vector2.ZERO
+	var cnt := 0
+	for v in verts:
+		var h := (v.y - y0) / H
+		if h > 0.2 and h < 0.45:
+			col += Vector2(v.x, v.z)
+			cnt += 1
+	col /= float(maxi(cnt, 1))
+	var bins := 40
+	var rad := PackedFloat32Array()
+	rad.resize(bins)
+	for v in verts:
+		var k := clampi(int((v.y - y0) / H * bins), 0, bins - 1)
+		rad[k] = maxf(rad[k], Vector2(v.x, v.z).distance_to(col))
+	var col_r := PackedFloat32Array()
+	for k in range(int(bins * 0.2), int(bins * 0.45)):
+		col_r.append(rad[k])
+	col_r.sort()
+	var base_r := col_r[col_r.size() / 2]
+	var cut := y0 + H * 0.55
+	for k in range(int(bins * 0.3), int(bins * 0.8)):
+		if rad[k] > base_r * 1.8:
+			cut = y0 + H * (float(k) / bins) - H * 0.02
+			break
+	var far: Array = []
+	for v in verts:
+		if v.y > cut:
+			far.append([Vector2(v.x, v.z).distance_to(col), Vector2(v.x - col.x, v.z - col.y)])
+	far.sort_custom(func(a, b) -> bool: return a[0] > b[0])
+	var dir := Vector2.ZERO
+	for i in mini(maxi(far.size() / 50, 5), far.size()):
+		dir += (far[i][1] as Vector2).normalized()
+	dir = dir.normalized()
+	print("  auto: pivot (%.2f, %.2f), column r %.2f, cut %.2f of H, fwd %s" % [col.x, col.y, base_r, (cut - y0) / H, dir])
+	return {"cx": col.x, "cz": col.y, "cut": cut, "fwd": dir}
+
 
 func bake_turret(n: String, p: Dictionary) -> void:
 	print("turret ", n)
@@ -291,6 +368,8 @@ func bake_turret(n: String, p: Dictionary) -> void:
 		return
 	var verts: PackedVector3Array = d["verts"]
 	var bb := bounds(verts)
+	if bool(p.get("auto", false)):
+		p = _with(auto_turret(verts), p)          # заданные вручную значения важнее найденных
 	var fwd: Vector2 = (p["fwd"] as Vector2).normalized()
 	var cx: float = p["cx"]
 	var cz: float = p["cz"]
@@ -311,12 +390,39 @@ func bake_turret(n: String, p: Dictionary) -> void:
 		{"name": "turret", "parent": "root", "pos": Vector3(cx, cut, cz)},
 		{"name": "gun", "parent": "turret", "pos": Vector3(cx, tip.y, cz)},
 	]
+	# блок стволов Гатлинга: передняя часть орудия (дальше 55 % пути от оси до дула) рядом с линией ствола
+	var spin := bool(p.get("spin", false))
+	var f3 := Vector3(fwd.x, 0.0, fwd.y)
+	var piv := Vector3(cx, 0.0, cz)
+	var tip_d := (tip - piv).dot(f3)
+	var is_barrel := func(v: Vector3) -> bool:
+		if not spin or v.y < cut:
+			return false
+		var along := (v - piv).dot(f3)
+		if along < tip_d * 0.55:
+			return false
+		var side := (v - piv) - f3 * along
+		return Vector2(side.x, side.z).length() < bb.size.y * 0.12 and absf(v.y - tip.y) < bb.size.y * 0.14
+	var bc := Vector3.ZERO
+	var bn := 0
+	if spin:
+		for v in verts:
+			if is_barrel.call(v):
+				bc += v
+				bn += 1
+		bc /= float(maxi(bn, 1))
+		bones.append({"name": "barrels", "parent": "gun", "pos": bc})
+		print("  spinning barrels: %d vertices, axis through %s" % [bn, bc])
 	var normals := smooth_normals(verts, d["idx"])
-	var s := simplify(verts, normals, d["uvs"], d["idx"], 1.0)
+	var s := simplify(verts, normals, d["uvs"], d["idx"], int(p.get("tris", 1600)))
 	var bi := PackedInt32Array()
 	var bw := PackedFloat32Array()
 	for v in verts:
 		var w_up := smoothstep(cut - 0.03, cut + 0.03, v.y)
+		if is_barrel.call(v):
+			bi.append_array(PackedInt32Array([3, 0, 0, 0]))
+			bw.append_array(PackedFloat32Array([1.0, 0.0, 0.0, 0.0]))
+			continue
 		bi.append_array(PackedInt32Array([0, 2, 0, 0]))
 		bw.append_array(PackedFloat32Array([1.0 - w_up, w_up, 0.0, 0.0]))
 	var arrays := base_arrays(verts, normals, d["uvs"], s["idx"])
@@ -341,6 +447,8 @@ func bake_turret(n: String, p: Dictionary) -> void:
 	root.set_meta("gun_axis", Vector3(-fwd.y, 0.0, fwd.x))
 	root.set_meta("fwd", Vector3(fwd.x, 0.0, fwd.y))
 	root.set_meta("tex", n)
+	if spin:
+		root.set_meta("spin_axis", f3)
 	save_scene(root, OUT + str(p["out"]) + ".scn")
 	root.free()
 	save_tex(d["image"], n, 1024)
@@ -903,7 +1011,7 @@ func bake_humanoid(n: String, p: Dictionary) -> void:
 		verts[i] -= off
 	var rig := auto_skeleton(verts, d["idx"])
 	var normals := smooth_normals(verts, d["idx"])
-	var s := simplify(verts, normals, d["uvs"], d["idx"], float(p["ratio"]))
+	var s := simplify(verts, normals, d["uvs"], d["idx"], int(p["tris"]))
 	var wts := auto_weights(verts, rig)
 	if OS.get_environment("RT_DEBUG") != "":
 		_debug_weights(verts, rig, wts)
@@ -970,7 +1078,7 @@ func bake_girl() -> void:
 		verts[i] -= off
 	var rig := auto_skeleton(verts, d["idx"])
 	var normals := smooth_normals(verts, d["idx"])
-	var s := simplify(verts, normals, d["uvs"], d["idx"], 0.5)
+	var s := simplify(verts, normals, d["uvs"], d["idx"], 1300)
 	var wts := auto_weights(verts, rig)
 	if OS.get_environment("RT_DEBUG") != "":
 		_debug_weights(verts, rig, wts)
@@ -1044,38 +1152,92 @@ func bake_weapon(n: String, p: Dictionary) -> void:
 		verts[i] -= c
 	var gun: bool = p["mode"] == "gun"
 	var ax := principal_axis(verts)
-	if bool(p["flip"]):
-		ax = -ax
-	var main_to := Vector3(0, 0, -1) if gun else Vector3(0, 1, 0)
-	var q := Basis(Quaternion(ax, main_to))
-	for i in verts.size():
-		verts[i] = q * verts[i]
-	# вторая ось — в плоскости, перпендикулярной главной: 2D-ковариация и «хвост» (третий момент)
-	var u := Vector3(1, 0, 0)
-	var w := Vector3(0, 1, 0) if gun else Vector3(0, 0, 1)
-	var suu := 0.0
-	var suw := 0.0
-	var sww := 0.0
-	for v in verts:
-		var a := v.dot(u)
-		var b := v.dot(w)
-		suu += a * a
-		suw += a * b
-		sww += b * b
-	var ang := 0.5 * atan2(2.0 * suw, suu - sww)       # угол главной оси 2D-распределения от u
-	var e2 := u * cos(ang) + w * sin(ang)
-	var skew := 0.0
-	for v in verts:
-		skew += pow(v.dot(e2), 3.0)
-	if skew < 0.0:
-		e2 = -e2                                         # e2 теперь смотрит в сторону «хвоста»
-	var target := (Vector3(0, 1, 0) if gun else Vector3(0, 0, 1)) * float(p["tail"])
-	var r := Basis(Quaternion(e2, target))
-	for i in verts.size():
-		verts[i] = r * verts[i]
+	var e2 := Vector3.ZERO
+	if bool(p.get("auto", false)):
+		# концы: у автомата дуло тоньше приклада, у топора головка толще рукояти
+		var proj := PackedFloat32Array()
+		var lo := INF
+		var hi := -INF
+		for v in verts:
+			var t := v.dot(ax)
+			proj.append(t)
+			lo = minf(lo, t)
+			hi = maxf(hi, t)
+		var spread := func(from: float, to: float) -> float:
+			var sm := 0.0
+			var cnt := 0
+			for i in verts.size():
+				if proj[i] >= from and proj[i] <= to:
+					sm += (verts[i] - ax * proj[i]).length()
+					cnt += 1
+			return sm / maxf(cnt, 1)
+		var len := hi - lo
+		var s_lo: float = spread.call(lo, lo + len * 0.2)
+		var s_hi: float = spread.call(hi - len * 0.2, hi)
+		var hi_is_target := (s_hi < s_lo) if gun else (s_hi > s_lo)     # целевой конец: дуло / головка
+		if not hi_is_target:
+			ax = -ax
+		var main_to := Vector3(0, 0, -1) if gun else Vector3(0, 1, 0)
+		var q := Basis(Quaternion(ax, main_to))
+		for i in verts.size():
+			verts[i] = q * verts[i]
+		# поворот вокруг оси: у автомата ствол выше центра масс (магазин и рукоять внизу) → «вверх»;
+		# у топора лезвие — смещение головки от рукояти → вперёд (+Z)
+		var all_c := Vector3.ZERO
+		var end_c := Vector3.ZERO
+		var cnt2 := 0
+		var lo2 := INF
+		var hi2 := -INF
+		for v in verts:
+			var t2 := v.dot(main_to)
+			lo2 = minf(lo2, t2)
+			hi2 = maxf(hi2, t2)
+		for v in verts:
+			all_c += v
+			if v.dot(main_to) > hi2 - (hi2 - lo2) * (0.3 if gun else 0.22):
+				end_c += v
+				cnt2 += 1
+		all_c /= float(verts.size())
+		end_c /= float(maxi(cnt2, 1))
+		var off := end_c - all_c
+		off -= main_to * off.dot(main_to)
+		var target := Vector3(0, 1, 0) if gun else Vector3(0, 0, 1)
+		e2 = off.normalized()
+		var r0 := Basis(Quaternion(e2, target))
+		for i in verts.size():
+			verts[i] = r0 * verts[i]
+	else:
+		if bool(p["flip"]):
+			ax = -ax
+		var main_to2 := Vector3(0, 0, -1) if gun else Vector3(0, 1, 0)
+		var q2 := Basis(Quaternion(ax, main_to2))
+		for i in verts.size():
+			verts[i] = q2 * verts[i]
+		# вторая ось — в плоскости, перпендикулярной главной: 2D-ковариация и «хвост» (третий момент)
+		var u := Vector3(1, 0, 0)
+		var w := Vector3(0, 1, 0) if gun else Vector3(0, 0, 1)
+		var suu := 0.0
+		var suw := 0.0
+		var sww := 0.0
+		for v in verts:
+			var a := v.dot(u)
+			var b := v.dot(w)
+			suu += a * a
+			suw += a * b
+			sww += b * b
+		var ang := 0.5 * atan2(2.0 * suw, suu - sww)
+		e2 = u * cos(ang) + w * sin(ang)
+		var skew := 0.0
+		for v in verts:
+			skew += pow(v.dot(e2), 3.0)
+		if skew < 0.0:
+			e2 = -e2
+		var r := Basis(Quaternion(e2, (Vector3(0, 1, 0) if gun else Vector3(0, 0, 1)) * float(p["tail"])))
+		for i in verts.size():
+			verts[i] = r * verts[i]
 	var bb2 := bounds(verts)
 	var normals := smooth_normals(verts, d["idx"])
-	var s := simplify(verts, normals, d["uvs"], d["idx"], float(p["ratio"]))
+	var s := simplify(verts, normals, d["uvs"], d["idx"], int(p["tris"]))
 	var mesh := build_mesh(base_arrays(verts, normals, d["uvs"], s["idx"]), s["lods"])
 	mesh.set_meta("aabb", bb2)
 	print("  axis ", ax, " tail ", e2, " size ", bb2.size, " -> ", error_string(ResourceSaver.save(mesh, OUT + n + ".res")))
@@ -1123,68 +1285,6 @@ static func _debug_weights(verts: PackedVector3Array, rig: Dictionary, wts: Arra
 			var nm: String = names[bi[i * 4]]
 			bad[nm] = int(bad.get(nm, 0)) + 1
 	print("  weights at |x|>0.22H: ", bad, " hand_zone ", rig.get("hand_zone", {}))
-
-
-## Генератор склеивает касающиеся поверхности в одну сетку (кисть с бедром, локоть с поясом, стопы между собой).
-## Такие треугольники-«перепонки» соединяют части тела, которые двигаются по-разному, и при движении тянутся палками —
-## вырезаем их (на месте касания дырка не видна). Удаляем треугольник, если его вершины принадлежат костям, которые
-## в теле не соединены: рука — нога, рука — другая рука.
-static func cut_webs(s: Dictionary, wts: Array, rig: Dictionary, verts: PackedVector3Array) -> void:
-	var bi: PackedInt32Array = wts[0]
-	var bw: PackedFloat32Array = wts[1]
-	var names: Array = []
-	var chest_y := 0.0
-	for b in rig["bones"]:
-		names.append(b["name"])
-		if b["name"] == "chest":
-			chest_y = (b["pos"] as Vector3).y
-	var n := bw.size() / 4
-	var dom := PackedInt32Array()
-	dom.resize(n)
-	for i in n:
-		var best := 0
-		for k in range(1, 4):
-			if bw[i * 4 + k] > bw[i * 4 + best]:
-				best = k
-		dom[i] = bi[i * 4 + best]
-	# семейство кости: 0 корпус, 1/2 рука L/R, 3/4 нога L/R; is_fore — предплечье
-	var fam := PackedInt32Array()
-	var fore := PackedByteArray()
-	for nm: String in names:
-		var f := 0
-		if nm.begins_with("upperarm") or nm.begins_with("forearm"):
-			f = 1 if nm.ends_with("_L") else 2
-		elif nm.begins_with("thigh") or nm.begins_with("shin") or nm.begins_with("foot"):
-			f = 3 if nm.ends_with("_L") else 4
-		fam.append(f)
-		fore.append(1 if nm.begins_with("forearm") else 0)
-	var hips := names.find("hips")
-	var spine := names.find("spine")
-	var bad := func(a: int, b: int) -> bool:
-		var ba := dom[a]
-		var bb := dom[b]
-		var fa := fam[ba]
-		var fb := fam[bb]
-		if fa == fb:
-			return false
-		# рука — нога, рука — другая рука; остальные «склейки» режет cut_stretched по реальным анимациям
-		return (fa in [1, 2] and fb != 0) or (fb in [1, 2] and fa != 0)
-	var filt := func(idx: PackedInt32Array) -> PackedInt32Array:
-		var out := PackedInt32Array()
-		for t in range(0, idx.size(), 3):
-			var a := idx[t]
-			var b := idx[t + 1]
-			var c := idx[t + 2]
-			if bad.call(a, b) or bad.call(b, c) or bad.call(a, c):
-				continue
-			out.append_array(PackedInt32Array([a, b, c]))
-		return out
-	var before: int = (s["idx"] as PackedInt32Array).size() / 3
-	s["idx"] = filt.call(s["idx"])
-	var lods: Dictionary = s["lods"]
-	for key in lods.keys():
-		lods[key] = filt.call(lods[key])
-	print("  cut webs: %d triangles" % (before - (s["idx"] as PackedInt32Array).size() / 3))
 
 
 ## «Склейки»: генератор сращивает касающиеся части тела (кисть с бедром, обувь между собой). Рёбра «кисть/предплечье —
