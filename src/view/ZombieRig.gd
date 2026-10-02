@@ -292,11 +292,15 @@ func _apply_emission() -> void:
 
 
 ## Модели зомби (tools/bake_all.gd → assets/models/baked): ходок z_walker, толстый z_fat, броненосец z_armored,
-## взрывун z_boomer, громила z_brute; бегунья — одна сетка girl и пять текстур. Скелет из 16 костей, анимации
-## walk/attack/idle. Модели смотрят в -Z, поэтому корень повёрнут на 180°; размер — по росту типа из Cfg.
+## взрывун z_boomer, громила z_brute; бегунья — одна сетка girl и пять текстур. Скелет из 16 костей; анимации
+## перенесены с пака «Polyart Zombies» (tools/retarget.gd): у каждой модели одна-две походки (выбирается случайно),
+## два удара и покой. Модели смотрят в -Z, поэтому корень повёрнут на 180°; размер — по росту типа из Cfg.
 const MODELS := {"normal": "z_walker", "fat": "z_fat", "fast": "girl", "armored": "z_armored", "boomer": "z_boomer", "brute": "z_brute"}
 const GIRL_TEX := ["girl_A", "girl_B", "girl_green", "girl_blue", "girl_red"]
-var stride := 0.9                # метров на цикл шага (фаза шага считается по пройденному пути)
+var stride := 0.9                # метров на цикл походки (фаза шага считается по пройденному пути — ноги не скользят)
+var _walk := "walk"
+var _attack := "attack"
+var _walk_len := 1.0
 
 
 func _build_rigged() -> bool:
@@ -308,8 +312,9 @@ func _build_rigged() -> bool:
 	_skel_root = (load(path) as PackedScene).instantiate()
 	var rig_h: float = float(_skel_root.get_meta("rig_height", 1.0))
 	var h: float = zc["height"]
+	var k := h / rig_h
 	_skel_root.rotation.y = PI
-	_skel_root.scale = Vector3.ONE * (h / rig_h)
+	_skel_root.scale = Vector3.ONE * k
 	add_child(_skel_root)
 	_anim = _skel_root.get_node("AnimationPlayer")
 	var body := _skel_root.find_child("Body", true, false) as MeshInstance3D
@@ -324,29 +329,43 @@ func _build_rigged() -> bool:
 	scale = Vector3.ONE
 	_mats = [mat]
 	top_y = h + 0.18
-	stride = 0.9 * h / 1.8
-	_set_mode("walk")
+	# походка и удар — случайный вариант из запечённых; длина шага — из метаданных (в метрах модели × масштаб)
+	var meta: Dictionary = _skel_root.get_meta("anims", {})
+	var walks: Array = meta.get("walks", [])
+	var attacks: Array = meta.get("attacks", [])
+	if not walks.is_empty():
+		_walk = walks[randi() % walks.size()]
+		stride = float(meta["stride"][_walk]) * k
+	else:
+		stride = 0.9 * h / 1.8
+	if not attacks.is_empty():
+		_attack = attacks[randi() % attacks.size()]
+	_walk_len = _anim.get_animation(_walk).length if _anim.has_animation(_walk) else 1.0
+	_set_mode(_walk)
 	return true
+
 
 func _set_mode(m: String) -> void:
 	if m == _mode:
 		return
 	_mode = m
-	_anim.play(m)
-	if m == "walk":
+	if m == _walk:
+		_anim.play(m)                # кадр задаётся вручную по пройденному пути
 		_anim.pause()
+	else:
+		_anim.play(m, 0.2)           # плавный переход к удару
 
 
-## Пока зомби идёт — поза берётся из фазы шага (ноги точно попадают в такт с перемещением);
-## остановился (упёрся в турель) — играет анимация атаки.
+## Пока зомби идёт — кадр походки берётся из пройденного пути (phase: 2π = один цикл, stride метров),
+## поэтому шаги совпадают со скоростью; остановился (упёрся в турель или солдата) — играет удар.
 func _animate_rigged(dt: float, phase: float) -> void:
 	if absf(phase - _last_phase) < 0.0005:
 		_still += dt
 	else:
 		_still = 0.0
 	_last_phase = phase
-	if _still > 0.25:
-		_set_mode("attack")
+	if _still > 0.3:
+		_set_mode(_attack)
 	else:
-		_set_mode("walk")
-		_anim.seek(fposmod(phase / TAU, 1.0), true)
+		_set_mode(_walk)
+		_anim.seek(fposmod(phase / TAU, 1.0) * _walk_len, true)

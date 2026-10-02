@@ -30,6 +30,12 @@ var zombie_views: Dictionary = {}     # id -> Dictionary
 var rocket_views: Dictionary = {}     # id -> Node3D
 var corpses: Array = []
 
+# плавность: позиции зомби показываются с задержкой INTERP_DELAY между двумя снапшотами (по времени симуляции),
+# а не «догоняют» последнюю точку — иначе скорость скачет 20 раз в секунду и шаги дёргаются
+const INTERP_DELAY := 0.1
+var _clock := -1.0                    # оценка текущего времени симуляции на этом компьютере
+var _latest := -1.0                   # время последнего полученного снапшота
+
 var fps_turret_id := 0                # какая турель занята локальным игроком (0 — никакая)
 var fps_yaw := 0.0
 var fps_pitch := 0.0
@@ -489,6 +495,11 @@ func wall_at(cell: Vector2i) -> bool:
 
 
 func apply_snapshot(s: Dictionary) -> void:
+	var st := float(s.get("time", -1.0))
+	if st >= 0.0:
+		_latest = st
+		if _clock < 0.0 or absf(st - _clock) > 0.5:
+			_clock = st                   # первый снапшот или большой разрыв (загрузка, пауза) — синхронизируемся сразу
 	_sync_turrets(s["turrets"])
 	_sync_zombies(s["zombies"], s["deaths"])
 	_sync_rockets(s["rockets"])
@@ -577,10 +588,15 @@ func _sync_zombies(list: Array, deaths: Array) -> void:
 			var bar := _make_hp_bar()
 			add_child(bar)
 			v = {"rig": rig, "bar": bar, "x": z["x"], "z": z["z"], "tx": z["x"], "tz": z["z"], "heading": 0.0,
-				"phase": randf() * 6.0, "flash": 0.0, "hp_frac": 1.0, "type": z["type"], "burning": false}
+				"phase": randf() * 6.0, "flash": 0.0, "hp_frac": 1.0, "type": z["type"], "burning": false, "hist": []}
 			zombie_views[id] = v
 		v["tx"] = z["x"]
 		v["tz"] = z["z"]
+		if _latest >= 0.0:
+			var hist: Array = v["hist"]
+			hist.append(Vector3(_latest, z["x"], z["z"]))
+			if hist.size() > 8:
+				hist.pop_front()
 		v["hp_frac"] = clampf(float(z["hp"]) / maxf(1.0, float(z["max_hp"])), 0.0, 1.0)
 		v["burning"] = z["burning"]
 	var dead := {}
@@ -825,6 +841,21 @@ func _update_players(delta: float) -> void:
 		rig.update(delta, float(v["yaw"]), float(v["pitch"]), float(v["speed"]))
 
 
+## Позиция (x, z) на момент t по истории снапшотов [Vector3(время, x, z)]: линейно между соседними, без экстраполяции.
+static func _sample(hist: Array, t: float) -> Vector2:
+	var first: Vector3 = hist[0]
+	if t <= first.x:
+		return Vector2(first.y, first.z)
+	for i in range(hist.size() - 1):
+		var a: Vector3 = hist[i]
+		var b: Vector3 = hist[i + 1]
+		if t <= b.x:
+			var k := clampf((t - a.x) / maxf(b.x - a.x, 0.0001), 0.0, 1.0)
+			return Vector2(lerpf(a.y, b.y, k), lerpf(a.z, b.z, k))
+	var last: Vector3 = hist[hist.size() - 1]
+	return Vector2(last.y, last.z)
+
+
 ## Точка дула для своего выстрела: чуть впереди, правее и ниже глаз.
 func own_muzzle() -> Vector3:
 	var dir := SimMath.aim_direction(free_yaw, free_pitch)
@@ -941,21 +972,38 @@ func _process(delta: float) -> void:
 			var f: float = v["hp_frac"]
 			_set_bar(bar, f, Color("59a8d6") if f > 0.5 else (Color("e0c040") if f > 0.25 else Color("e04a3a")))
 
-	# зомби: сглаживание между тиками симуляции, поворот по ходу, ходьба, полоска HP, горение
+	# часы симуляции: идут с реальным временем и мягко подтягиваются к меткам снапшотов
+	if _clock >= 0.0:
+		_clock += delta
+		_clock += clampf(_latest - _clock, -0.05, 0.05) * minf(1.0, delta * 3.0)
+	var render_t := _clock - INTERP_DELAY
+
+	# зомби: интерполяция между снапшотами, поворот по направлению движения, шаг по пройденному пути, HP, горение
 	var za := 1.0 - exp(-delta * 20.0)
 	for id in zombie_views.keys():
 		var v: Dictionary = zombie_views[id]
 		var rig: ZombieRig = v["rig"]
 		var px: float = v["x"]
 		var pz: float = v["z"]
-		v["x"] = px + (float(v["tx"]) - px) * za
-		v["z"] = pz + (float(v["tz"]) - pz) * za
+		var hist: Array = v["hist"]
+		if _clock >= 0.0 and not hist.is_empty():
+			var p := _sample(hist, render_t)
+			v["x"] = p.x
+			v["z"] = p.y
+			# направление — по отрезку пути за 0,2 с (не по кадру: так нет дрожания на поворотах сетки)
+			var back := _sample(hist, render_t - 0.2)
+			var dir := p - back
+			if dir.length() > 0.04:
+				var target := atan2(dir.x, dir.y)
+				v["heading"] = float(v["heading"]) + wrapf(target - float(v["heading"]), -PI, PI) * minf(1.0, delta * 6.0)
+		else:
+			v["x"] = px + (float(v["tx"]) - px) * za
+			v["z"] = pz + (float(v["tz"]) - pz) * za
 		var dx: float = v["x"] - px
 		var dz: float = v["z"] - pz
 		var moved := sqrt(dx * dx + dz * dz)
-		if moved > 0.0001:
-			var target := atan2(dx, dz)
-			v["heading"] = float(v["heading"]) + wrapf(target - float(v["heading"]), -PI, PI) * minf(1.0, delta * 10.0)
+		if hist.is_empty() and moved > 0.0001:
+			v["heading"] = float(v["heading"]) + wrapf(atan2(dx, dz) - float(v["heading"]), -PI, PI) * minf(1.0, delta * 10.0)
 		v["phase"] = float(v["phase"]) + moved * TAU / rig.stride
 		rig.position.x = v["x"]
 		rig.position.z = v["z"]

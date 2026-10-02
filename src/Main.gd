@@ -437,10 +437,10 @@ func _setup_scenario(name: String) -> void:
 					for i in types.size():
 						sim.zombies.spawn(10, types[i])
 						var zz: SimZombie = sim.zombies.zombies.values()[sim.zombies.zombies.size() - 1]
-						zz.x = 2.0 + i * 1.1
-						zz.z = 4.5
+						zz.x = 1.0 + i * 1.2
+						zz.z = 9.5 + (i % 2) * 0.8
 						zz.hp = 1e6
-					cam_rig.focus_target = Vector3(5.0, 0.8, 4.5); cam_rig.dist_target = 7.5; cam_rig.yaw_target = 0.0]]
+					cam_rig.focus_target = Vector3(5.0, 0.8, 9.5); cam_rig.dist_target = 7.0; cam_rig.yaw_target = -0.9]]
 		"report":
 			_scenario_steps = [[3, func() -> void: sim.add_player(2); sim.players[2]["name"] = "Vasya"],
 				[5, func() -> void: _on_command(1, {"t": "startWave"})],
@@ -451,6 +451,10 @@ func _setup_scenario(name: String) -> void:
 						sim.zombies.damage(z.id, 1e6, 1, "bullet")]]
 		"overview":
 			_scenario_steps = [[5, func() -> void: cam_rig.dist_target = 46.0; cam_rig.yaw_target = 0.5; cam_rig.focus_target = Vector3(4, 0, 10)]]
+		"smooth":
+			_scenario_steps = [[3, func() -> void: sim.wave = 3; _on_command(1, {"t": "startWave"})]]
+			for i in range(90, 330):
+				_scenario_steps.append([i, func() -> void: _probe_smooth()])
 		"fps_mg", "fps_flame", "fps_rocket", "fps_gun":
 			var w := name.substr(4)
 			_scenario_steps = [[3, func() -> void: sim.money = 6000; sim.wave = 8; sim.turret_stock = 8],
@@ -460,6 +464,29 @@ func _setup_scenario(name: String) -> void:
 						if t.weapon == ("machinegun" if w == "mg" else w):
 							input_ctl.enter_fps(t.id)
 							break]]
+
+
+var _probe_prev := Vector3.INF
+var _probe_speeds: Array = []
+
+
+## Замер плавности (сценарий smooth): скорость первого зомби на экране по кадрам.
+func _probe_smooth() -> void:
+	if world.zombie_views.is_empty():
+		return
+	var id: int = world.zombie_views.keys().min()
+	var rig: Node3D = world.zombie_views[id]["rig"]
+	if _probe_prev != Vector3.INF:
+		_probe_speeds.append(rig.position.distance_to(_probe_prev) / get_process_delta_time())
+	_probe_prev = rig.position
+	if _frame == 329:
+		var mean := 0.0
+		for v in _probe_speeds: mean += v
+		mean /= _probe_speeds.size()
+		var sd := 0.0
+		for v in _probe_speeds: sd += (v - mean) * (v - mean)
+		sd = sqrt(sd / _probe_speeds.size())
+		print("smooth probe: frames %d mean speed %.2f m/s, std %.2f (%.0f%%)" % [_probe_speeds.size(), mean, sd, 100.0 * sd / maxf(mean, 0.001)])
 
 
 func _run_scenario() -> void:

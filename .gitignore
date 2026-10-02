@@ -5,3 +5,4 @@ save*.json
 
 /build/
 /assets/source/refs/
+/assets/source/zombie_pack.glb

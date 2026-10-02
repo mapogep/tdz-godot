@@ -49,12 +49,42 @@ const WEAPONS := {
 const GIRLS := ["girl_A", "girl_B", "girl_green", "girl_blue", "girl_red"]
 
 var only: Array = []
+var rt                                   # tools/retarget.gd: анимации из пака зомби
+var _done := false
+
+# походки для каждой модели зомби (клипы пака, tools/retarget.gd WALKS); атаки и покой — у всех
+const ZOMBIE_WALKS := {
+	"z_walker": ["walk_a", "walk_b"], "z_fat": ["walk_b"], "z_armored": ["walk_a"],
+	"z_boomer": ["walk_b"], "z_brute": ["walk_a"], "girl": ["run"],
+}
 
 
 func _init() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--only="):
 			only = a.substr(7).split(",")
+
+
+## Работа — в первом кадре: GLTF-пак анимаций нужно поставить в дерево сцены, чтобы снять позы.
+func _process(_d: float) -> bool:
+	if _done:
+		return true
+	_done = true
+	_run()
+	if rt != null:
+		rt.free_pack()
+	return true
+
+
+func _anim_pack():
+	if rt == null and FileAccess.file_exists(ProjectSettings.globalize_path("res://assets/source/zombie_pack.glb")):
+		rt = load("res://tools/retarget.gd").new()
+		if not rt.load_pack(get_root()):
+			rt = null
+	return rt
+
+
+func _run() -> void:
 	DirAccess.make_dir_recursive_absolute(OUT)
 	DirAccess.make_dir_recursive_absolute(TEX)
 	for p in PROPS:
@@ -71,7 +101,6 @@ func _init() -> void:
 			bake_weapon(n, WEAPONS[n])
 	if _want("girl"):
 		bake_girl()
-	quit()
 
 
 func _want(n: String) -> bool:
@@ -533,7 +562,7 @@ static func auto_skeleton(verts: PackedVector3Array, idx: PackedInt32Array) -> D
 			for tr in tail:
 				var sg: Vector2i = tr[1]
 				hx += (sil.cx(sg.x) + sil.cx(sg.y)) * 0.5
-			return [Vector3(hx / tail.size(), (int(trace[trace.size() - 1][0]) + 1.5) * sil.cell, 0.0), trace.size()]
+			return [Vector3(hx / tail.size(), (int(trace[trace.size() - 1][0]) + 1.5) * sil.cell, 0.0), trace.size(), trace]
 		var ext_q := c0
 		var ext_rows: Array = []
 		for rr in range(sil.row(H * 0.25), sil.row(sh_y)):
@@ -549,16 +578,16 @@ static func auto_skeleton(verts: PackedVector3Array, idx: PackedInt32Array) -> D
 		for rr in ext_rows:
 			hand_y += (rr + 0.5) * sil.cell
 		hand_y /= float(maxi(ext_rows.size(), 1))
-		return [Vector3(sil.cx(ext_q) - side * H * 0.02, hand_y, 0.0), 0]
+		return [Vector3(sil.cx(ext_q) - side * H * 0.02, hand_y, 0.0), 0, []]
 	var hands := {-1: find_hand.call(-1), 1: find_hand.call(1)}
 	# тела почти симметричны: если одна рука найдена заметно выше другой — зеркалим лучшую
 	var hl: Vector3 = hands[-1][0]
 	var hr: Vector3 = hands[1][0]
 	if absf(hl.y - hr.y) > H * 0.08:
 		if hl.y < hr.y:
-			hands[1] = [Vector3(-hl.x, hl.y, hl.z), hands[-1][1]]
+			hands[1] = [Vector3(-hl.x, hl.y, hl.z), hands[-1][1], []]
 		else:
-			hands[-1] = [Vector3(-hr.x, hr.y, hr.z), hands[1][1]]
+			hands[-1] = [Vector3(-hr.x, hr.y, hr.z), hands[1][1], []]
 	var drops := {}
 	for side: int in [-1, 1]:
 		var suffix := "_L" if side < 0 else "_R"
@@ -602,26 +631,82 @@ static func auto_skeleton(verts: PackedVector3Array, idx: PackedInt32Array) -> D
 		drops[side] = atan2(absf(hand.x - shoulder.x), maxf(shoulder.y - hand.y, 0.01))
 	print("  H %.2f crotch %.2f neck %.2f shoulders %.2f drops %.2f %.2f" % [H, crotch / H, neck / H, sh_y / H, drops[-1], drops[1]])
 	_debug_image(sil, bones, segs)
-	return {"bones": bones, "segs": segs, "drop_l": drops[-1], "drop_r": drops[1], "height": H}
+	# строки силуэта, где рука отделена от корпуса: {сторона: {строка: [первый, последний столбец]}} — для весов кожи
+	var arm_rows := {}
+	for side: int in [-1, 1]:
+		var rows := {}
+		for tr in hands[side][2]:
+			rows[int(tr[0])] = tr[1]
+		arm_rows[side] = rows
+	return {"bones": bones, "segs": segs, "drop_l": drops[-1], "drop_r": drops[1], "height": H,
+		"arm_rows": arm_rows, "sil_cell": sil.cell, "sil_x0": sil.x0}
 
-## Веса кожи: 1/d⁴ до сегментов костей; вершина не получает кости противоположной стороны; до 4 влияний.
+## Веса кожи. Кость — «капсула»: отрезок с радиусом, оценённым по самой модели (75-й перцентиль расстояний
+## «своих» вершин; корпус толстый, рука тонкая). Вес 1/d⁴ от поверхности капсулы, а не от оси — иначе бока корпуса
+## у подмышек достаются руке и тянутся при взмахе. Вершина не получает кости противоположной стороны; до 4 влияний.
 static func auto_weights(verts: PackedVector3Array, rig: Dictionary) -> Array:
 	var index := {}
 	var bones: Array = rig["bones"]
 	for i in bones.size():
 		index[bones[i]["name"]] = i
 	var H: float = rig["height"]
+	var segs: Array = rig["segs"]
+	var side_of := func(v: Vector3) -> int:
+		return 0 if absf(v.x) < H * 0.02 else (1 if v.x > 0.0 else -1)
+	# радиусы капсул: для каждой вершины ближайший по оси отрезок → распределение расстояний по костям
+	var dists: Array = []
+	for s in segs:
+		dists.append(PackedFloat32Array())
+	for v in verts:
+		var best := -1
+		var best_d := INF
+		var vs: int = side_of.call(v)
+		for i in segs.size():
+			var sd: int = segs[i][3]
+			if sd != 0 and vs != 0 and sd != vs:
+				continue
+			var d := seg_dist(v, segs[i][1], segs[i][2])
+			if d < best_d:
+				best_d = d
+				best = i
+		if best >= 0:
+			dists[best].append(best_d)
+	var radius := PackedFloat32Array()
+	for i in segs.size():
+		var arr: PackedFloat32Array = dists[i]
+		if arr.is_empty():
+			radius.append(0.0)
+			continue
+		arr.sort()
+		radius.append(arr[int(arr.size() * 0.75)] * 0.85)
+	# руки по силуэту: в строках, где рука отделена от корпуса, вершины внутри отрезка руки — только руке,
+	# снаружи — никогда руке (бока корпуса и волосы не тянутся за рукой)
+	var arm_rows: Dictionary = rig.get("arm_rows", {})
+	var cell: float = rig.get("sil_cell", 1.0)
+	var x0: float = rig.get("sil_x0", 0.0)
+	var is_arm := func(name: String) -> bool: return name.begins_with("upperarm") or name.begins_with("forearm")
 	var bi := PackedInt32Array()
 	var bw := PackedFloat32Array()
 	for v in verts:
 		var ws: Array = []
-		var vs := 0 if absf(v.x) < H * 0.02 else (1 if v.x > 0.0 else -1)
-		for s in rig["segs"]:
-			var side: int = s[3]
-			if side != 0 and vs != 0 and side != vs:
+		var vs: int = side_of.call(v)
+		var arm_mode := 0          # 0 — без ограничений, 1 — только рука своей стороны, -1 — без рук
+		if vs != 0 and arm_rows.has(vs):
+			var rr := int(floor(v.y / cell))
+			var rows: Dictionary = arm_rows[vs]
+			if rows.has(rr):
+				var seg: Vector2i = rows[rr]
+				var q := int(floor((v.x - x0) / cell))
+				arm_mode = 1 if (q >= seg.x - 1 and q <= seg.y + 1) else -1
+		for i in segs.size():
+			var sd: int = segs[i][3]
+			if sd != 0 and vs != 0 and sd != vs:
 				continue
-			var d := seg_dist(v, s[1], s[2])
-			ws.append([index[s[0]], 1.0 / pow(d + H * 0.01, 4.0)])
+			var arm: bool = is_arm.call(str(segs[i][0]))
+			if (arm_mode == 1 and not arm) or (arm_mode == -1 and arm):
+				continue
+			var d := maxf(seg_dist(v, segs[i][1], segs[i][2]) - radius[i], 0.0)
+			ws.append([index[segs[i][0]], 1.0 / pow(d + H * 0.012, 4.0)])
 		ws.sort_custom(func(a: Array, b: Array) -> bool: return a[1] > b[1])
 		var total := 0.0
 		for k in mini(4, ws.size()):
@@ -634,7 +719,6 @@ static func auto_weights(verts: PackedVector3Array, rig: Dictionary) -> Array:
 				bi.append(0)
 				bw.append(0.0)
 	return [bi, bw]
-
 
 # ───────────────────────── анимации ─────────────────────────
 
@@ -795,6 +879,12 @@ func bake_humanoid(n: String, p: Dictionary) -> void:
 		# точки крепления оружия (в системе скелета): автомат у груди справа, ствол вперёд (-Z)
 		var chest: Vector3 = rig["bones"][3]["pos"]
 		root.set_meta("rifle_pos", chest + Vector3(H * 0.07, -H * 0.06, -H * 0.16))
+	elif _anim_pack() != null:
+		# у громилы огромные руки висят вдоль тела — полный размах рук из пака сетка не выдерживает
+		var damp := {"upperarm_L": 0.55, "upperarm_R": 0.55, "forearm_L": 0.7, "forearm_R": 0.7} if n == "z_brute" else {}
+		var res: Array = rt.zombie_library(rig, ZOMBIE_WALKS.get(n, ["walk_a"]), damp)
+		ap.add_animation_library("", res[0])
+		root.set_meta("anims", res[1])
 	else:
 		ap.add_animation_library("", zombie_anims(rig["drop_l"], rig["drop_r"], hips, H))
 	save_scene(root, OUT + n + ".scn")
@@ -802,73 +892,48 @@ func bake_humanoid(n: String, p: Dictionary) -> void:
 	save_tex(d["image"], n, int(p["tex"]))
 
 
-## Быстрые зомби: модели девушек (руки вдоль тела). Скелет расставлен вручную по модели (система после разворота
-## на 180°: лицом к -Z), сетка упрощается вдвое, пять вариантов текстуры на одной сетке.
-const G_BONES := [
-	{"name": "root", "parent": "", "pos": Vector3(0, -1.0, 0)},
-	{"name": "hips", "parent": "root", "pos": Vector3(0, 0.03, 0.0)},
-	{"name": "spine", "parent": "hips", "pos": Vector3(0, 0.2, 0.0)},
-	{"name": "chest", "parent": "spine", "pos": Vector3(0, 0.38, 0.0)},
-	{"name": "neck", "parent": "chest", "pos": Vector3(0, 0.6, 0.0)},
-	{"name": "head", "parent": "neck", "pos": Vector3(0, 0.68, 0.0)},
-	{"name": "upperarm_L", "parent": "chest", "pos": Vector3(-0.17, 0.5, 0.0)},
-	{"name": "forearm_L", "parent": "upperarm_L", "pos": Vector3(-0.27, 0.2, 0.0)},
-	{"name": "upperarm_R", "parent": "chest", "pos": Vector3(0.17, 0.5, 0.0)},
-	{"name": "forearm_R", "parent": "upperarm_R", "pos": Vector3(0.27, 0.2, 0.0)},
-	{"name": "thigh_L", "parent": "hips", "pos": Vector3(-0.09, 0.02, 0.0)},
-	{"name": "shin_L", "parent": "thigh_L", "pos": Vector3(-0.1, -0.42, -0.02)},
-	{"name": "foot_L", "parent": "shin_L", "pos": Vector3(-0.1, -0.8, 0.0)},
-	{"name": "thigh_R", "parent": "hips", "pos": Vector3(0.09, 0.02, 0.0)},
-	{"name": "shin_R", "parent": "thigh_R", "pos": Vector3(0.1, -0.42, -0.02)},
-	{"name": "foot_R", "parent": "shin_R", "pos": Vector3(0.1, -0.8, 0.0)},
-]
-const G_SEGS := [
-	["hips", Vector3(0, 0.03, 0), Vector3(0, 0.2, 0), 0], ["spine", Vector3(0, 0.2, 0), Vector3(0, 0.38, 0), 0],
-	["chest", Vector3(0, 0.38, 0), Vector3(0, 0.6, 0), 0], ["neck", Vector3(0, 0.6, 0), Vector3(0, 0.69, 0), 0],
-	["head", Vector3(0, 0.69, 0), Vector3(0, 0.98, 0), 0],
-	["upperarm_L", Vector3(-0.17, 0.5, 0), Vector3(-0.27, 0.2, 0), -1], ["forearm_L", Vector3(-0.27, 0.2, 0), Vector3(-0.31, -0.2, 0), -1],
-	["upperarm_R", Vector3(0.17, 0.5, 0), Vector3(0.27, 0.2, 0), 1], ["forearm_R", Vector3(0.27, 0.2, 0), Vector3(0.31, -0.2, 0), 1],
-	["thigh_L", Vector3(-0.09, 0.02, 0), Vector3(-0.1, -0.42, -0.02), -1], ["shin_L", Vector3(-0.1, -0.42, -0.02), Vector3(-0.1, -0.8, 0), -1],
-	["foot_L", Vector3(-0.1, -0.8, 0), Vector3(-0.1, -0.98, -0.2), -1],
-	["thigh_R", Vector3(0.09, 0.02, 0), Vector3(0.1, -0.42, -0.02), 1], ["shin_R", Vector3(0.1, -0.42, -0.02), Vector3(0.1, -0.8, 0), 1],
-	["foot_R", Vector3(0.1, -0.8, 0), Vector3(0.1, -0.98, -0.2), 1],
-]
-
-
+## Быстрые зомби: модели девушек — одна сетка, пять текстур; автоматический скелет, как у остальных.
 func bake_girl() -> void:
 	print("girl")
+	debug_name = "girl"
 	var d := load_glb("girl_A")
 	var verts: PackedVector3Array = d["verts"]
 	for i in verts.size():
-		verts[i] = Vector3(-verts[i].x, verts[i].y, -verts[i].z)
+		verts[i] = Vector3(-verts[i].x, verts[i].y, -verts[i].z)     # лицом к -Z
 	var bb := bounds(verts)
+	var off := Vector3(bb.get_center().x, bb.position.y, bb.get_center().z)
+	for i in verts.size():
+		verts[i] -= off
+	var rig := auto_skeleton(verts, d["idx"])
 	var normals := smooth_normals(verts, d["idx"])
 	var s := simplify(verts, normals, d["uvs"], d["idx"], 0.5)
-	var rig := {"bones": G_BONES, "segs": G_SEGS, "height": bb.size.y}
 	var wts := auto_weights(verts, rig)
 	var arrays := base_arrays(verts, normals, d["uvs"], s["idx"])
 	arrays[Mesh.ARRAY_BONES] = wts[0]
 	arrays[Mesh.ARRAY_WEIGHTS] = wts[1]
 	var root := Node3D.new()
 	root.name = "Girl"
-	var sk := make_skeleton(G_BONES)
-	sk.position.y = -bb.position.y
+	var sk := make_skeleton(rig["bones"])
 	root.add_child(sk)
 	var mi := MeshInstance3D.new()
 	mi.name = "Body"
 	mi.mesh = build_mesh(arrays, s["lods"])
-	mi.skin = make_skin(G_BONES)
-	mi.custom_aabb = AABB(bb.position - Vector3(0.6, 0.6, 0.6), bb.size + Vector3(1.2, 1.2, 1.2))
+	mi.skin = make_skin(rig["bones"])
+	var H: float = rig["height"]
+	mi.custom_aabb = AABB(Vector3(-H * 0.7, -H * 0.2, -H * 0.7), Vector3(H * 1.4, H * 1.4, H * 1.4))
 	sk.add_child(mi)
 	mi.skeleton = NodePath("..")
-	root.set_meta("rig_height", bb.size.y)
+	root.set_meta("rig_height", H)
 	var ap := AnimationPlayer.new()
 	ap.name = "AnimationPlayer"
 	root.add_child(ap)
-	var sh: Vector3 = G_BONES[6]["pos"]
-	var el: Vector3 = G_BONES[7]["pos"]
-	var drop := atan2(absf(el.x - sh.x), sh.y - el.y)
-	ap.add_animation_library("", zombie_anims(drop, drop, (G_BONES[1]["pos"] as Vector3) - (G_BONES[0]["pos"] as Vector3), bb.size.y))
+	if _anim_pack() != null:
+		# у девушки руки прижаты к телу и рукава короткие: размах рук при беге уменьшаем
+		var res: Array = rt.zombie_library(rig, ZOMBIE_WALKS["girl"], {"upperarm_L": 0.5, "upperarm_R": 0.5, "forearm_L": 0.6, "forearm_R": 0.6})
+		ap.add_animation_library("", res[0])
+		root.set_meta("anims", res[1])
+	else:
+		ap.add_animation_library("", zombie_anims(rig["drop_l"], rig["drop_r"], rig["bones"][1]["pos"], H))
 	save_scene(root, OUT + "girl.scn")
 	root.free()
 	for g in GIRLS:

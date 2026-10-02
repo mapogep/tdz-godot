@@ -35,6 +35,7 @@ var host_id: int = 0
 var state: String = "Preparation"
 var wave: int = 1
 var prep_left: float = Cfg.PREP_TIME
+var time := 0.0                       # время симуляции, с (метка снапшотов — по ней клиенты плавно интерполируют)
 var _queue: Array = []
 var _spawn_cd: float = 0.0
 var _wave_spawn_wave: int = 1
@@ -281,6 +282,7 @@ func _wave_finished() -> bool:
 
 ## Один тик симуляции (dt — секунды).
 func tick(dt: float) -> void:
+	time += dt
 	match state:
 		"Preparation":
 			prep_left -= dt
@@ -390,7 +392,7 @@ func snapshot() -> Dictionary:
 			"score": _score_of(int(id)), "kills": int(scores.get(id, {}).get("kills", 0)),
 			"deaths": int(scores.get(id, {}).get("deaths", 0))})
 	var s := {
-		"state": state, "wave": wave, "prep_left": int(ceil(maxf(0.0, prep_left))),
+		"time": time, "state": state, "wave": wave, "prep_left": int(ceil(maxf(0.0, prep_left))),
 		"money": money, "walls_left": wall_stock, "turrets_left": turret_stock,
 		"zombies": zombies.snapshot(), "turrets": turrets.snapshot(), "players": pl,
 		"rockets": turrets.rockets_snapshot(),

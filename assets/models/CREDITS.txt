@@ -1,1 +1,6 @@
 ﻿3D models: Kenney (kenney.nl) - Graveyard Kit, Tower Defense Kit, Car Kit, City Kit (Commercial, Suburban), Nature Kit, Prototype Kit, Blaster Kit - all CC0 1.0. Mirrored via github.com/Hidencod/tge-assets
+
+Zombie animations (retargeted onto the game's own zombie models by tools/retarget.gd):
+  "Polyart Zombies with Animations Free Pack" by Denys Almaral, https://sketchfab.com/denysalmaral
+  https://sketchfab.com/3d-models/polyart-zombies-with-animations-free-pack-d9bcfdd88f5348549bc947226af7c314
+  License: Sketchfab Standard (use in projects allowed; the source file itself is not redistributed and is not in the repository).
